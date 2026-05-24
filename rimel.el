@@ -291,7 +291,7 @@ When SHOW-PREEDIT is non-nil, include the preedit string."
          (page-no (or (alist-get 'page-no menu) 0))
          (last-page-p (alist-get 'last-page-p menu))
          (sep (or separator " ")))
-    (when candidates
+    (if (and candidates (not (null candidates)))
       (let ((parts '())
             (idx 0)
             (candidates-list candidates)
@@ -314,7 +314,12 @@ When SHOW-PREEDIT is non-nil, include the preedit string."
         (push (format "(%d%s)" (1+ (or page-no 0))
                       (if last-page-p "" "+"))
               parts)
-        (string-join (nreverse parts) sep)))))
+        (string-join (nreverse parts) sep))
+        ;; 无候选词：仅在未启用 inline preedit 时显示输入内容，避免重复
+        (when (and (not rimel-inline-preedit)
+                 preedit
+                 (not (string-empty-p preedit)))
+        (format "[%s]" preedit)))))
 
 (defun rimel--show-candidates (context)
   "Display candidates from CONTEXT using the configured method.
