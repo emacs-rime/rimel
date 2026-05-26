@@ -576,6 +576,19 @@ digits and punctuation."
        (>= rimel--current-input-key ?A)
        (<= rimel--current-input-key ?Z)))
 
+(defun rimel-predicate-after-digit-punct-p ()
+  "Return non-nil when point is after a digit and the current key is ‘.’ or ‘:’.
+This predicate is intended for use with `rimel-disable-predicates'.
+When it returns t, the key is passed through directly (as an ASCII
+character) instead of being processed by Rime.  That allows typing
+decimal points (3.14) or time (12:34) without leaving Chinese mode."
+  (and rimel--current-input-key
+       (integerp rimel--current-input-key)
+       (memq rimel--current-input-key '(?. ?:))
+       (not (bobp))
+       (let ((prev (char-before)))
+         (and prev (>= prev ?0) (<= prev ?9)))))
+
 (declare-function evil-normal-state-p "ext:evil-states")
 (declare-function evil-visual-state-p "ext:evil-states")
 (declare-function evil-motion-state-p "ext:evil-states")
