@@ -106,6 +106,11 @@ the overlay at the cursor position."
   :type 'boolean
   :group 'rimel)
 
+(defcustom rimel-digit-dot-to-ascii t
+  "When non-nil, typing '.' after a digit (0-9) directly inserts '.'.
+This avoids Chinese period '。' when you intend to type a decimal point."
+  :type 'boolean
+  :group 'rimel)
 
 (defcustom rimel-keymap
   '(("<home>"        . "<home>"                   )
@@ -438,6 +443,16 @@ This function serves as `input-method-function'."
             overriding-local-map)
         (list key)
       ;; Start composition
+      (if (and rimel-digit-dot-to-ascii
+               (eq k ?.)                       ; 句点键
+               (not (bobp))                    ; 前面有字符
+               (let ((prev (char-before)))
+                 (and prev (>= prev ?0) (<= prev ?9))))  ; 前一个是数字
+          (progn
+            ;; 清理可能残留的 rime 状态（如果有）
+            (liberime-clear-composition)
+            (rimel--clear-state)
+            (list ?.))                         ; 直接返回英文点
       (liberime-clear-composition)
       (liberime-process-key k)
       ;; Check immediate commit (e.g., rime auto-select)
@@ -445,7 +460,7 @@ This function serves as `input-method-function'."
         (if commit
             (string-to-list commit)
           ;; Enter composition loop
-          (rimel--composition-loop))))))
+          (rimel--composition-loop)))))))
 
 (defun rimel--update-display ()
   "Update preedit overlay and candidate display from current rime state.
