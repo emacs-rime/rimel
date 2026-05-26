@@ -622,6 +622,34 @@ to detecting $ and \\ prefixes."
              (let ((ch (char-before)))
                (or (eq ch ?$) (eq ch ?\\)))))))
 
+(defmacro rimel-predicate-after-digit-punct-p (&rest punct-chars)
+  "Return a predicate function that disables Chinese input after a digit.
+When the returned predicate returns non-nil, the key is passed
+through directly (as an ASCII character) instead of being
+processed by Rime.  That allows typing decimal points (3.14) or
+time (12:34) without leaving Chinese mode.
+
+Optional PUNCT-CHARS are the characters to check for; defaults
+to (?. ?:).
+
+Usage:
+  ;; Default: pass-through ?. and ?: after a digit
+  (add-to-list \='rimel-disable-predicates
+               (rimel-predicate-after-digit-punct-p))
+  ;; Custom chars, e.g. also allow hyphen after digit
+  (add-to-list \='rimel-disable-predicates
+               (rimel-predicate-after-digit-punct-p ?. ?: ?-))"
+  (let ((chars (or punct-chars '(?. ?:))))
+    `(lambda ()
+       ,(format "Predicate: pass-through %s after a digit."
+                (mapconcat (lambda (c) (string c)) chars ", "))
+       (and rimel--current-input-key
+            (integerp rimel--current-input-key)
+            (memq rimel--current-input-key ',chars)
+            (not (bobp))
+            (let ((prev (char-before)))
+              (and prev (>= prev ?0) (<= prev ?9)))))))
+
 ;;;###autoload (autoload 'rimel-select-schema "rimel" "Select a rime schema interactive." t)
 (defalias 'rimel-select-schema #'liberime-select-schema-interactive)
 
