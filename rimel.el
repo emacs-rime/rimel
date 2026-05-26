@@ -176,6 +176,15 @@ Example:
   :type '(repeat function)
   :group 'rimel)
 
+(defcustom rimel-digit-punct-to-ascii '(?. ?:)
+  "List of punctuation characters to treat as ASCII when preceded by a digit.
+When the input key (after keyboard translate) is one of these characters
+and the character immediately before point is a digit (0-9), the key is
+inserted as-is instead of being passed to Rime.  This allows typing
+decimal points, colons (e.g. 12:34), etc. while staying in Chinese mode."
+  :type '(repeat character)
+  :group 'rimel)
+
 (defface rimel-preedit-face
   '((t (:inherit font-lock-builtin-face)))
   "Face for the inline preedit string."
@@ -437,6 +446,15 @@ This function serves as `input-method-function'."
                  (lookup-key overriding-terminal-local-map (vector key)))
             overriding-local-map)
         (list key)
+      (if (and rimel-digit-punct-to-ascii
+               (memq k rimel-digit-punct-to-ascii)
+               (not (bobp))
+               (let ((prev (char-before)))
+                 (and prev (>= prev ?0) (<= prev ?9))))
+          (progn
+            (liberime-clear-composition)
+            (rimel--clear-state)
+            (list k))                ;; 直接插入英文标点
       ;; Start composition
       (liberime-clear-composition)
       (liberime-process-key k)
@@ -445,7 +463,7 @@ This function serves as `input-method-function'."
         (if commit
             (string-to-list commit)
           ;; Enter composition loop
-          (rimel--composition-loop))))))
+          (rimel--composition-loop)))))))
 
 (defun rimel--update-display ()
   "Update preedit overlay and candidate display from current rime state.
