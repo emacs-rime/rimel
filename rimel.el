@@ -106,6 +106,25 @@ the overlay at the cursor position."
   :type 'boolean
   :group 'rimel)
 
+(defcustom rimel-candidate-comment-format "%s(%s)"
+  "Format string for displaying candidate comments.
+The string must contain exactly two `%s' specifiers: the first
+for the candidate text, the second for the comment (e.g., a
+frequency indicator).  Set to nil to hide comments completely.
+
+Examples:
+  \"%s(%s)\" → candidate(comment)
+  \"%s%s\"   → candidatecomment
+  \"%s %s\"  → candidate comment
+  \"%s[%s]\" → candidate[comment]"
+  :type '(choice
+          (const :tag "Parentheses: candidate(comment)" "%s(%s)")
+          (const :tag "No separator: candidatecomment" "%s%s")
+          (const :tag "Space: candidate comment" "%s %s")
+          (const :tag "Brackets: candidate[comment]" "%s[%s]")
+          (const :tag "Hide comments" nil)
+          (string :tag "Custom format"))
+  :group 'rimel)
 
 (defcustom rimel-keymap
   '(("<home>"        . "<home>"                   )
@@ -303,7 +322,9 @@ When SHOW-PREEDIT is non-nil, include the preedit string."
         (dolist (cand candidates-list)
           (let* ((label-str (format "%d." (1+ idx)))
                 (comment (get-text-property 0 :comment cand))
-                (text (if comment (format "%s(%s)" cand comment) cand))
+                (text (if (and comment rimel-candidate-comment-format)
+                          (format rimel-candidate-comment-format cand comment)
+                        cand))
                 (item (format "%s%s" label-str text)))
             (push (if (eql idx highlight-idx)
                       (propertize item 'face 'rimel-highlight-face)
