@@ -21,7 +21,7 @@ Rimel 是一个轻量级的 Emacs 中文输入法，直接基于 [liberime](http
 ### 前置条件
 
 1. 安装 [librime](https://github.com/rime/librime)
-2. melpa上安装 [liberime](https://github.com/merrickluo/liberime) 并确保可用
+2. melpa上安装 [liberime](https://github.com/merrickluo/liberime) 并确保可用。注意，如果出现 `liberime-` 相关报错（如 `Liberime: Fail to load liberime-core module, try to run command: (liberime-build)`，请查询liberime的README获取详细说明。
 
 ### 配置
 
