@@ -235,6 +235,39 @@ See =posframe-show= for supported values."
   :type '(plist)
   :group 'rimel)
 
+(defcustom rimel-cursor-active-lighter 10
+  "Percentage to lighten the cursor color when Rimel is active.
+Used as the second argument of `color-lighten-name'.
+Only effective when `rimel-cursor-color-active' is set to its
+default value (automatically generated)."
+  :type 'integer
+  :group 'rimel)
+
+(defvar rimel--original-cursor-color
+  (let ((base (ignore-errors
+                (face-background 'cursor nil 'default))))
+    (if (and base (not (eq base 'unspecified)))
+        base
+      (or (frame-parameter nil 'cursor-color) "black")))
+  "Base cursor color derived from the current theme.
+This is used to compute the default `rimel-cursor-color-active'.
+Do not set this manually; it is computed at load time.")
+
+(defvar rimel--cursor-active-p nil
+  "Non-nil when Rimel's active cursor color is currently applied.")
+
+(defcustom rimel-cursor-color-active
+  (ignore-errors
+    (color-lighten-name rimel--original-cursor-color
+                        rimel-cursor-active-lighter))
+  "Cursor color when Rimel is active.
+The default value is calculated by lightening the current cursor
+color (from the theme) by `rimel-cursor-active-lighter' percent.
+Set to nil to disable cursor color changes entirely."
+  :type '(choice (const :tag "Disabled" nil)
+                 color)
+  :group 'rimel)
+
 ;;; Internal variables
 
 (defvar rimel--preedit-overlay nil
@@ -246,7 +279,6 @@ Available for use by predicate functions in `rimel-disable-predicates'.")
 
 (defvar rimel--posframe-buffer " *rimel-posframe*"
   "Buffer name for posframe candidate display.")
-
 
 ;;; Activation / Deactivation
 
@@ -670,6 +702,35 @@ Usage:
             (not (bobp))
             (let ((prev (char-before)))
               (and prev (>= prev ?0) (<= prev ?9)))))))
+
+(defun rimel--update-cursor-color ()
+  "Set cursor color according to `current-input-method'.
+When the current input method is \"rimel\", apply
+`rimel-cursor-color-active' (if non-nil).  
+Otherwise, restore the saved original color."
+  (if (and rimel-cursor-color-active
+           (string= current-input-method "rimel"))
+      (unless rimel--cursor-active-p
+        (set-cursor-color rimel-cursor-color-active)
+        (setq rimel--cursor-active-p t))
+    ;; Revert to original cursor color
+    (when rimel--cursor-active-p
+      (set-cursor-color rimel--original-cursor-color)
+      (setq rimel--cursor-active-p nil))))
+
+;;;###autoload
+(define-minor-mode rimel-cursor-color-mode
+  "Toggle automatic cursor color change when Rimel input method is active."
+  :init-value nil
+  :group 'rimel
+  (if rimel-cursor-color-mode
+      (progn
+        (add-hook 'post-command-hook #'rimel--update-cursor-color)
+        (rimel--update-cursor-color))
+    (remove-hook 'post-command-hook #'rimel--update-cursor-color)
+    (when rimel--cursor-active-p
+      (set-cursor-color rimel--original-cursor-color)
+      (setq rimel--cursor-active-p nil))))
 
 ;;;###autoload (autoload 'rimel-select-schema "rimel" "Select a rime schema interactive." t)
 (defalias 'rimel-select-schema #'liberime-select-schema-interactive)
