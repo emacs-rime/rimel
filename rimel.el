@@ -126,6 +126,30 @@ Examples:
           (string :tag "Custom format"))
   :group 'rimel)
 
+(defcustom rimel-candidate-label-format "%d."
+  "Format string for candidate labels.
+The string must contain one `%d' specifier for the candidate number
+\(1-based).
+
+Examples:
+  \"%d.\" → 1.candidate
+  \"%d \" → 1 candidate"
+  :type 'string
+  :group 'rimel)
+
+(defcustom rimel-page-indicator-format "(%d%s)"
+  "Format string for the page indicator.
+The string must contain one `%d' specifier for the page number
+\(1-based) and one `%s' specifier for the continuation marker
+\(\"+\" when more pages exist, empty string on the last page).
+
+Examples:
+  \"(%d%s)\" → (1+) or (2)
+  \"[%d%s]\" → [1+] or [2]
+  \"%d%s\" → 1+ or P2"
+  :type 'string
+  :group 'rimel)
+
 (defcustom rimel-keymap
   '(("<home>"        . "<home>"                   )
     ("<left>"        . "<left>"                   )
@@ -228,6 +252,13 @@ Example:
   :type 'integer
   :group 'rimel)
 
+(defcustom rimel-posframe-properties
+  '(:border-width 1)
+  "Properties for posframe.
+See =posframe-show= for supported values."
+  :type '(plist)
+  :group 'rimel)
+
 (defface rimel-posframe-face
   '((t (:inherit default)))
   "Face for the posframe body text."
@@ -236,37 +267,6 @@ Example:
 (defface rimel-posframe-border-face
   '((t (:inherit border)))
   "Face for the posframe border."
-  :group 'rimel)
-
-(defcustom rimel-candidate-label-format "%d."
-  "Format string for candidate labels.
-The string must contain one `%d' specifier for the candidate number
-\(1-based).
-
-Examples:
-  \"%d.\" → 1.candidate
-  \"%d \" → 1 candidate"
-  :type 'string
-  :group 'rimel)
-
-(defcustom rimel-page-indicator-format "(%d%s)"
-  "Format string for the page indicator.
-The string must contain one `%d' specifier for the page number
-\(1-based) and one `%s' specifier for the continuation marker
-\(\"+\" when more pages exist, empty string on the last page).
-
-Examples:
-  \"(%d%s)\" → (1+) or (2)
-  \"[%d%s]\" → [1+] or [2]
-  \"%d%s\" → 1+ or 2"
-  :type 'string
-  :group 'rimel)
-
-(defcustom rimel-posframe-properties
-  '(:border-width 1)
-  "Properties for posframe.
-See =posframe-show= for supported values."
-  :type '(plist)
   :group 'rimel)
 
 ;;; Internal variables
