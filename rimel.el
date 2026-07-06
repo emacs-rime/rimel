@@ -150,6 +150,26 @@ Examples:
   :type 'string
   :group 'rimel)
 
+(defcustom rimel-posframe-style 'vertical
+  "Candidate layout style in posframe.
+`vertical'   - one candidate per line
+`horizontal' - all candidates in one line"
+  :type '(choice (const :tag "Vertical" vertical)
+                 (const :tag "Horizontal" horizontal))
+  :group 'rimel)
+
+(defcustom rimel-posframe-min-width 20
+  "Minimum width of the posframe."
+  :type 'integer
+  :group 'rimel)
+
+(defcustom rimel-posframe-properties
+  '(:border-width 1)
+  "Properties for posframe.
+See =posframe-show= for supported values."
+  :type '(plist)
+  :group 'rimel)
+
 (defcustom rimel-keymap
   '(("<home>"        . "<home>"                   )
     ("<left>"        . "<left>"                   )
@@ -237,26 +257,6 @@ Example:
 (defface rimel-page-indicator-face
   '((t (:inherit font-lock-comment-face)))
   "Face for the page indicator."
-  :group 'rimel)
-
-(defcustom rimel-posframe-style 'vertical
-  "Candidate layout style in posframe.
-`vertical'   - one candidate per line
-`horizontal' - all candidates in one line"
-  :type '(choice (const :tag "Vertical" vertical)
-                 (const :tag "Horizontal" horizontal))
-  :group 'rimel)
-
-(defcustom rimel-posframe-min-width 20
-  "Minimum width of the posframe."
-  :type 'integer
-  :group 'rimel)
-
-(defcustom rimel-posframe-properties
-  '(:border-width 1)
-  "Properties for posframe.
-See =posframe-show= for supported values."
-  :type '(plist)
   :group 'rimel)
 
 (defface rimel-posframe-face
