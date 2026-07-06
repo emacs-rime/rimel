@@ -126,6 +126,30 @@ Examples:
           (string :tag "Custom format"))
   :group 'rimel)
 
+(defcustom rimel-candidate-label-format "%d."
+  "Format string for candidate labels.
+The string must contain one `%d' specifier for the candidate number
+\(1-based).
+
+Examples:
+  \"%d.\" → 1.candidate
+  \"%d \" → 1 candidate"
+  :type 'string
+  :group 'rimel)
+
+(defcustom rimel-page-indicator-format "(%d%s)"
+  "Format string for the page indicator.
+The string must contain one `%d' specifier for the page number
+\(1-based) and one `%s' specifier for the continuation marker
+\(\"+\" when more pages exist, empty string on the last page).
+
+Examples:
+  \"(%d%s)\" → (1+) or (2)
+  \"[%d%s]\" → [1+] or [2]
+  \"%d%s\" → 1+ or P2"
+  :type 'string
+  :group 'rimel)
+
 (defcustom rimel-keymap
   '(("<home>"        . "<home>"                   )
     ("<left>"        . "<left>"                   )
@@ -205,6 +229,16 @@ Example:
   "Face for the highlighted candidate."
   :group 'rimel)
 
+(defface rimel-candidate-label-face
+  '((t (:inherit font-lock-comment-face)))
+  "Face for candidate labels."
+  :group 'rimel)
+
+(defface rimel-page-indicator-face
+  '((t (:inherit font-lock-comment-face)))
+  "Face for the page indicator."
+  :group 'rimel)
+
 (defcustom rimel-posframe-style 'vertical
   "Candidate layout style in posframe.
 `vertical'   - one candidate per line
@@ -218,6 +252,13 @@ Example:
   :type 'integer
   :group 'rimel)
 
+(defcustom rimel-posframe-properties
+  '(:border-width 1)
+  "Properties for posframe.
+See =posframe-show= for supported values."
+  :type '(plist)
+  :group 'rimel)
+
 (defface rimel-posframe-face
   '((t (:inherit default)))
   "Face for the posframe body text."
@@ -226,13 +267,6 @@ Example:
 (defface rimel-posframe-border-face
   '((t (:inherit border)))
   "Face for the posframe border."
-  :group 'rimel)
-
-(defcustom rimel-posframe-properties
-  nil
-  "Properties for posframe.
-See =posframe-show= for supported values."
-  :type '(plist)
   :group 'rimel)
 
 ;;; Internal variables
@@ -314,13 +348,17 @@ When SHOW-PREEDIT is non-nil, include the preedit string."
       (let ((parts '())
             (idx 0)
             (candidates-list candidates)
-            (highlight-idx highlighted))
+            (highlight-idx highlighted)
+            (page-indicator (format rimel-page-indicator-format
+                                    (1+ (or page-no 0))
+                                    (if last-page-p "" "+"))))
         ;; Preedit (only for prompt, posframe has overlay)
         (when (and show-preedit preedit)
           (push (format "[%s]" preedit) parts))
         ;; Candidates
         (dolist (cand candidates-list)
-          (let* ((label-str (format "%d." (1+ idx)))
+          (let* ((label-str (propertize (format rimel-candidate-label-format (1+ idx))
+                                        'face 'rimel-candidate-label-face))
                 (comment (get-text-property 0 :comment cand))
                 (text (if (and comment rimel-candidate-comment-format)
                           (format rimel-candidate-comment-format cand comment)
@@ -332,8 +370,7 @@ When SHOW-PREEDIT is non-nil, include the preedit string."
                   parts))
           (setq idx (1+ idx)))
         ;; Page indicator
-        (push (format "(%d%s)" (1+ (or page-no 0))
-                      (if last-page-p "" "+"))
+        (push (propertize page-indicator 'face 'rimel-page-indicator-face)
               parts)
         (string-join (nreverse parts) sep))
         ;; 无候选词：仅在未启用 inline preedit 时显示输入内容，避免重复
@@ -390,7 +427,6 @@ prompt string for `read-event' when posframe is unavailable (TUI)."
          :position (point)
          :background-color (face-background 'rimel-posframe-face nil t)
          :foreground-color (face-foreground 'rimel-posframe-face nil t)
-         :border-width 1
          :border-color (face-background 'rimel-posframe-border-face nil t)
          :min-width rimel-posframe-min-width
          :timeout nil
