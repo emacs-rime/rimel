@@ -403,9 +403,13 @@ are displayed externally (e.g., via posframe)."
 ;; Posframe backend
 (defun rimel--at-screen-bottom-p ()
   "At screen bottom or not."
-  (let* ((current-line (count-screen-lines (window-start) (point)))
-         (window-height (window-body-height)))
-    (>= current-line (- window-height 1))))
+  (condition-case nil
+      (let* ((pmax   (point-max))
+             (pt     (min (point) pmax))
+             (wstart (min (window-start) pmax)))
+        (>= (count-screen-lines wstart pt)
+            (- (window-body-height) 1)))
+    (error nil)))
 
 (defun rimel--posframe-show (context)
   "Display candidates from CONTEXT in a posframe near cursor.
