@@ -15,6 +15,7 @@ Rimel 是一个轻量级的 Emacs 中文输入法，直接基于 [liberime](http
 - 🔢 **数字键/空格选候选**（由 rime 原生处理，无额外拦截）
 - ⌨️ **所有按键可配置**：翻页、确认、取消、退格、选择键均可自定义 see rimel-keymap
 - 🧠 **Predicates 断言**：根据上下文自动切换中/英文（代码区、字母后、evil 状态等）
+- 💡 **点石成金**：`rimel-convert-string-at-point` 将光标前的拼音/编码转换为中文（移植自 pyim 金手指）
 
 ## 安装
 
@@ -136,6 +137,20 @@ Predicates 是一组函数，在每次按键时检查上下文，决定是否跳
 (setq rimel-disable-predicates
       '(pyim-probe-program-mode))
 ```
+
+## 光标处编码转中文（点石成金）
+
+`rimel-convert-string-at-point` 移植自 pyim 的 `pyim-convert-string-at-point`（金手指）：
+删除光标前（或选中区域中）的编码字符串（如拼音），重新送入 rime 交互式转换为中文。
+转换期间忽略 `rimel-disable-predicates`。
+
+```elisp
+(global-set-key (kbd "M-i") 'rimel-convert-string-at-point)
+```
+
+- 默认匹配的编码字符为 `a-z'`（含拼音隔音符，五笔同样适用），可用 `rimel-convert-valid-chars` 定制（regexp 字符类内容）。
+- 光标前是 `'nihao` 这类字符串字面量时，开头的引号会被保留。
+- 注意：pyim 金手指中的词库管理触发功能（`中文2` 加词、`中文2-` 删词、选中中文加词）未移植，因为 rime 自行管理用户词典，上屏时自动学习新词。
 
 ## 与 [emacs-rime](https://github.com/DogLooksGood/emacs-rime)、[pyim](https://github.com/tumashu/pyim) 的对比
 

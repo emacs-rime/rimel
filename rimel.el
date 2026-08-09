@@ -239,6 +239,14 @@ Example:
   :type '(repeat function)
   :group 'rimel)
 
+(defcustom rimel-convert-valid-chars "a-z'"
+  "Characters allowed in a code string, as regexp character-class contents.
+Used by `rimel-convert-string-at-point' to find the code string
+before point.  The default covers pinyin (including the apostrophe
+syllable separator) and wubi."
+  :type 'string
+  :group 'rimel)
+
 (defface rimel-preedit-face
   '((t (:inherit font-lock-builtin-face)))
   "Face for the inline preedit string."
@@ -280,6 +288,10 @@ Available for use by predicate functions in `rimel-disable-predicates'.")
 
 (defvar rimel--posframe-buffer " *rimel-posframe*"
   "Buffer name for posframe candidate display.")
+
+(defvar rimel--force-input-chinese nil
+  "When non-nil, force Chinese input, ignoring disable predicates.
+Only used by `rimel-convert-string-at-point'.")
 
 
 ;;; Activation / Deactivation
@@ -448,7 +460,8 @@ prompt string for `read-event' when posframe is unavailable (TUI)."
   "Clear all composition state."
   (ignore-errors (liberime-clear-composition))
   (rimel--clear-preedit)
-  (rimel--hide-candidates))
+  (rimel--hide-candidates)
+  (setq rimel--force-input-chinese nil))
 
 (defun rimel--keyboard-translate (char)
   "If quail is loaded, translate CHAR via `quail-keyboard-translate'.
@@ -592,7 +605,8 @@ Return list of characters to insert, or nil."
                                unread-command-events))))))))
       ;; Cleanup (unwind-protect)
       (rimel--clear-preedit)
-      (rimel--hide-candidates))
+      (rimel--hide-candidates)
+      (setq rimel--force-input-chinese nil))
     ;; Return result
     (when (and result (not (string-equal result "")))
       (string-to-list result))))
@@ -601,9 +615,11 @@ Return list of characters to insert, or nil."
 
 (defun rimel--should-enable-p ()
   "Return non-nil if Chinese input should be active.
-Checks `rimel-disable-predicates'; if any returns non-nil,
+When `rimel--force-input-chinese' is non-nil, predicates are ignored.
+Otherwise check `rimel-disable-predicates'; if any returns non-nil,
 Chinese input is disabled for the current key."
-  (not (seq-find #'funcall rimel-disable-predicates)))
+  (or rimel--force-input-chinese
+      (not (seq-find #'funcall rimel-disable-predicates))))
 
 (defun rimel-predicate-prog-in-code-p ()
   "Return non-nil when cursor is in code (not string/comment).
@@ -710,6 +726,76 @@ Usage:
             (not (bobp))
             (let ((prev (char-before)))
               (and prev (>= prev ?0) (<= prev ?9)))))))
+
+;;; Convert string at point
+
+(defun rimel--activate-rimel ()
+  "Activate the rimel input method unless it is already active."
+  (unless (equal input-method-function #'rimel-input-method)
+    (activate-input-method "rimel")))
+
+(defun rimel--find-entered-at-point ()
+  "Find a valid code string at point, from the region or the line prefix.
+Return a list (ENTERED DELETE-COUNT): ENTERED is the code string with
+spaces removed, DELETE-COUNT the number of buffer characters it spans.
+Return nil when no code string is found."
+  (let* ((case-fold-search nil)
+         (regexp (format "[%s]+ *$" rimel-convert-valid-chars))
+         (string (if mark-active
+                     (buffer-substring-no-properties
+                      (region-beginning) (region-end))
+                   (buffer-substring (point) (line-beginning-position)))))
+    (when (string-match regexp string)
+      (let* ((entered (match-string 0 string))
+             ;; A leading quote or hyphen is usually a string delimiter
+             ;; in programming modes; strip it from the match.
+             (entered (replace-regexp-in-string "^[-']" "" entered))
+             (delete-count (length entered))
+             (entered (replace-regexp-in-string " +" "" entered)))
+        (when (> (length entered) 0)
+          (list entered delete-count))))))
+
+(defun rimel--delete-region-or-chars (&optional num)
+  "Delete the active region, or NUM characters before point."
+  (if mark-active
+      (delete-region (region-beginning) (region-end))
+    (when (and (numberp num) (> num 0))
+      (delete-char (- 0 num)))))
+
+(defun rimel--add-unread-command-events (string)
+  "Push the characters of STRING onto `unread-command-events'.
+This is a fork of `quail-add-unread-command-events'."
+  (setq unread-command-events
+        (append (mapcar (lambda (e) (cons 'no-record e)) string)
+                unread-command-events)))
+
+(defun rimel--feed-entered-at-point-into-rimel ()
+  "Delete the code string at point and feed it back through rimel.
+Return non-nil when a code string was found."
+  (let* ((entered-info (rimel--find-entered-at-point))
+         (entered (nth 0 entered-info))
+         (delete-count (nth 1 entered-info)))
+    (when entered-info
+      (rimel--delete-region-or-chars delete-count)
+      (rimel--add-unread-command-events entered)
+      (setq rimel--force-input-chinese t)
+      t)))
+
+;;;###autoload
+(defun rimel-convert-string-at-point ()
+  "Convert the code string before point (e.g. pinyin) to Chinese.
+Delete the code string before point (or in the active region) and feed
+it back through rimel, which converts it to Chinese interactively.
+Predicates in `rimel-disable-predicates' are ignored during the
+conversion.
+
+Note: unlike pyim's `pyim-convert-string-at-point', dictionary
+management triggers (adding or removing personal words) are not
+supported, as rime manages its user dictionary itself."
+  (interactive)
+  (rimel--activate-rimel)
+  (or (rimel--feed-entered-at-point-into-rimel)
+      (message "Rimel: no code string at point to convert.")))
 
 ;;;###autoload (autoload 'rimel-select-schema "rimel" "Select a rime schema interactive." t)
 (defalias 'rimel-select-schema #'liberime-select-schema-interactive)

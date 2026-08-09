@@ -714,6 +714,165 @@ Can be set in tests to simulate rime behavior.")
       (rimel--update-display)
       (should-not rimel--preedit-overlay))))               ; no overlay
 
+;; -----------------------------------------------------------------------
+;; Test: convert-string-at-point
+;; -----------------------------------------------------------------------
+
+(ert-deftest rimel-test-find-entered-at-point-basic ()
+  "Extract the code string before point."
+  (with-temp-buffer
+    (insert "nihao")
+    (should (equal '("nihao" 5) (rimel--find-entered-at-point)))))
+
+(ert-deftest rimel-test-find-entered-at-point-after-text ()
+  "Only the trailing code run before point is extracted."
+  (with-temp-buffer
+    (insert "abc nihao")
+    (should (equal '("nihao" 5) (rimel--find-entered-at-point)))))
+
+(ert-deftest rimel-test-find-entered-at-point-trailing-space ()
+  "Trailing spaces are skipped but counted for deletion."
+  (with-temp-buffer
+    (insert "nihao ")
+    (should (equal '("nihao" 6) (rimel--find-entered-at-point)))))
+
+(ert-deftest rimel-test-find-entered-at-point-leading-quote ()
+  "A leading quote or hyphen (string delimiter) is left in place."
+  (with-temp-buffer
+    (insert "'nihao")
+    (should (equal '("nihao" 5) (rimel--find-entered-at-point)))))
+
+(ert-deftest rimel-test-find-entered-at-point-separator ()
+  "Interior apostrophes (syllable separators) are kept."
+  (with-temp-buffer
+    (insert "ni'hao")
+    (should (equal '("ni'hao" 6) (rimel--find-entered-at-point)))))
+
+(ert-deftest rimel-test-find-entered-at-point-region ()
+  "An active region is used instead of the line prefix."
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (insert "nihao")
+    (push-mark (point-min) t t)
+    (should (equal '("nihao" 5) (rimel--find-entered-at-point)))))
+
+(ert-deftest rimel-test-find-entered-at-point-no-match ()
+  "Return nil when there is no code string at point."
+  (with-temp-buffer
+    (insert "123")
+    (should-not (rimel--find-entered-at-point)))
+  (with-temp-buffer
+    (should-not (rimel--find-entered-at-point))))
+
+(ert-deftest rimel-test-should-enable-p-force ()
+  "The force flag overrides disable predicates."
+  (let ((rimel--force-input-chinese t)
+        (rimel-disable-predicates (list (lambda () t))))
+    (should (rimel--should-enable-p))))
+
+(ert-deftest rimel-test-clear-state-resets-force-flag ()
+  "Clearing state also resets the force-Chinese flag."
+  (rimel-test--reset-rime)
+  (with-temp-buffer
+    (let ((rimel--force-input-chinese t))
+      (rimel--clear-state)
+      (should-not rimel--force-input-chinese))))
+
+(ert-deftest rimel-test-composition-loop-resets-force-flag ()
+  "Exiting the composition loop resets the force-Chinese flag."
+  (rimel-test--reset-rime)
+  (setq rimel-test--rime-input "ni"
+        rimel-test--rime-preedit "ni"
+        rimel-test--rime-candidates '("你" "妮"))
+  (with-temp-buffer
+    (let ((rimel--force-input-chinese t))
+      (cl-letf (((symbol-function 'read-event)
+                 (lambda (&optional _prompt) ?1)))
+        (rimel--composition-loop)
+        (should-not rimel--force-input-chinese)))))
+
+(ert-deftest rimel-test-convert-string-at-point ()
+  "Convert deletes the code string and feeds it back as unread events."
+  (rimel-test--reset-rime)
+  (with-temp-buffer
+    (rimel-activate "rimel")
+    (insert "nihao")
+    (let ((unread-command-events nil)
+          (rimel--force-input-chinese nil))
+      (rimel-convert-string-at-point)
+      (should (equal "" (buffer-string)))
+      (should (equal '(?n ?i ?h ?a ?o)
+                     (mapcar (lambda (e) (if (consp e) (cdr e) e))
+                             unread-command-events)))
+      (should rimel--force-input-chinese))))
+
+(ert-deftest rimel-test-convert-string-at-point-region ()
+  "Convert uses the active region when one exists."
+  (rimel-test--reset-rime)
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (rimel-activate "rimel")
+    (insert "nihao")
+    (push-mark (point-min) t t)
+    (let ((unread-command-events nil)
+          (rimel--force-input-chinese nil))
+      (rimel-convert-string-at-point)
+      (should (equal "" (buffer-string)))
+      (should (equal '(?n ?i ?h ?a ?o)
+                     (mapcar (lambda (e) (if (consp e) (cdr e) e))
+                             unread-command-events))))))
+
+(ert-deftest rimel-test-convert-string-at-point-no-code ()
+  "With no code string at point, nothing is deleted or fed."
+  (rimel-test--reset-rime)
+  (with-temp-buffer
+    (rimel-activate "rimel")
+    (insert "123")
+    (let ((unread-command-events nil)
+          (rimel--force-input-chinese nil))
+      (rimel-convert-string-at-point)
+      (should (equal "123" (buffer-string)))
+      (should-not unread-command-events)
+      (should-not rimel--force-input-chinese))))
+
+(ert-deftest rimel-test-convert-string-at-point-activates-im ()
+  "The command activates rimel when it is not the current input method."
+  (rimel-test--reset-rime)
+  (with-temp-buffer
+    (insert "ni")
+    (let ((unread-command-events nil)
+          (rimel--force-input-chinese nil))
+      (rimel-convert-string-at-point)
+      (should (eq input-method-function #'rimel-input-method)))))
+
+(ert-deftest rimel-test-convert-string-at-point-integration ()
+  "Fed events flow through `rimel-input-method' to a commit."
+  (rimel-test--reset-rime)
+  (with-temp-buffer
+    (rimel-activate "rimel")
+    (insert "ni")
+    ;; Predicates would normally block conversion; the force flag bypasses them.
+    (let ((unread-command-events nil)
+          (rimel--force-input-chinese nil)
+          (rimel-disable-predicates (list (lambda () t))))
+      (rimel-convert-string-at-point)
+      (setq rimel-test--process-key-hook
+            (lambda (_key _mask)
+              (when (string= rimel-test--rime-input "ni")
+                (setq rimel-test--rime-preedit "ni"
+                      rimel-test--rime-candidates '("你")))))
+      (cl-letf (((symbol-function 'read-event)
+                 (lambda (&optional _prompt)
+                   ;; Drain fed events, then select the first candidate.
+                   (if unread-command-events
+                       (let ((e (pop unread-command-events)))
+                         (if (consp e) (cdr e) e))
+                     ?1))))
+        (let* ((first (pop unread-command-events))
+               (result (rimel-input-method (if (consp first) (cdr first) first))))
+          (should (equal '(?你) result))
+          (should-not rimel--force-input-chinese))))))
+
 (provide 'rimel-test)
 
 ;;; rimel-test.el ends here
