@@ -727,6 +727,143 @@ Usage:
             (let ((prev (char-before)))
               (and prev (>= prev ?0) (<= prev ?9)))))))
 
+;;; Punctuation conversion
+
+(defcustom rimel-punctuation-dict
+  '(("'" "‘" "’")
+    ("\"" "“" "”")
+    ("_" "——")
+    ("^" "…")
+    ("]" "】")
+    ("[" "【")
+    ("@" "◎")
+    ("?" "？")
+    (">" "》")
+    ("=" "＝")
+    ("<" "《")
+    (";" "；")
+    (":" "：")
+    ("/" "、")
+    ("." "。")
+    ("-" "－")
+    ("," "，")
+    ("+" "＋")
+    ("*" "×")
+    (")" "）")
+    ("(" "（")
+    ("&" "※")
+    ("%" "％")
+    ("$" "￥")
+    ("#" "＃")
+    ("!" "！")
+    ("`" "・")
+    ("~" "～")
+    ("}" "』")
+    ("|" "÷")
+    ("{" "『"))
+  "Punctuation table: each row is (HALF-WIDTH FULL-WIDTH...).
+Rows with two full-width strings represent paired punctuation
+\(open and close forms), see `rimel-punctuation-translate'."
+  :type '(repeat (cons (string :tag "Half-width")
+                       (choice :tag "Full-width"
+                               (list :tag "Single" string)
+                               (list :tag "Paired" (string :tag "Open")
+                                     (string :tag "Close")))))
+  :group 'rimel)
+
+(defvar rimel--punctuation-pair-status '(("\"" nil) ("'" nil))
+  "Toggle state of paired punctuation, used by `rimel-punctuation-translate'.")
+
+(defun rimel--punctuation-position (string)
+  "Return the position of STRING in its `rimel-punctuation-dict' row.
+Position 0 means half-width, greater means full-width.  Return nil
+when STRING is not a known punctuation."
+  (let ((row (cl-some (lambda (x) (when (member string x) x))
+                      rimel-punctuation-dict)))
+    (cl-position string row :test #'equal)))
+
+(defun rimel--punctuation-proper-full (row)
+  "Return the proper full-width punctuation from dict ROW.
+For paired rows (e.g. quotes), alternate between the open and close
+forms using `rimel--punctuation-pair-status'."
+  (let* ((str (car row))
+         (punc (cdr row))
+         (switch-p (cdr (assoc str rimel--punctuation-pair-status))))
+    (if (= (safe-length punc) 1)
+        (car punc)
+      (setf (cdr (assoc str rimel--punctuation-pair-status))
+            (not switch-p))
+      ;; Note: the initial state (nil) is truthy, so the first
+      ;; form returned is the open form.
+      (if switch-p
+          (car punc)
+        (nth 1 punc)))))
+
+(defun rimel--char-before-string (num)
+  "Return the character NUM positions before point as a string, or nil."
+  (let ((pos (- (point) num)))
+    (when (and (> pos 0) (char-before pos))
+      (char-to-string (char-before pos)))))
+
+(defun rimel--char-after-string (num)
+  "Return the character NUM positions after point as a string, or nil."
+  (let ((pos (+ (point) num)))
+    (when (char-after pos)
+      (char-to-string (char-after pos)))))
+
+(defun rimel-punctuation-translate (&optional style)
+  "Convert punctuation around point between half-width and full-width.
+Convert the consecutive punctuation characters before point, plus an
+equal number of consecutive punctuation characters after point, so
+paired punctuation around point converts together.  STYLE is
+`full-width' or `half-width'; when nil, ask interactively."
+  (interactive)
+  (let ((puncs (flatten-tree rimel-punctuation-dict))
+        (style (or style
+                   (intern (completing-read
+                            "Convert punctuation at point to: "
+                            '("full-width" "half-width")))))
+        (lnum 0)
+        (rnum 0)
+        (point (point))
+        result)
+    (while (member (rimel--char-after-string rnum) puncs)
+      (cl-incf rnum))
+    (catch 'break
+      (while (<= lnum rnum)
+        (if (member (rimel--char-before-string lnum) puncs)
+            (cl-incf lnum)
+          (throw 'break nil))))
+    (setq rnum (min lnum rnum))
+    (when (> (+ lnum rnum) 0)
+      (let ((span (buffer-substring (- point lnum) (+ point rnum))))
+        (delete-char rnum)
+        (delete-char (- 0 lnum))
+        (dolist (punct (split-string span ""))
+          (dolist (row rimel-punctuation-dict)
+            (let ((pos (cl-position punct row :test #'equal)))
+              (when pos
+                (push (if (eq style 'full-width)
+                          (if (= pos 0)
+                              (rimel--punctuation-proper-full row)
+                            punct)
+                        (if (= pos 0) punct (car row)))
+                      result)))))
+        (insert (string-join (reverse result)))
+        (backward-char rnum)))))
+
+;;;###autoload
+(defun rimel-punctuation-translate-at-point ()
+  "Toggle the punctuation before point between half-width and full-width.
+Return non-nil when a conversion happened."
+  (interactive)
+  (let ((pos (rimel--punctuation-position
+              (or (rimel--char-before-string 0) ""))))
+    (cond
+     ((eq pos 0) (rimel-punctuation-translate 'full-width) t)
+     ((numberp pos) (rimel-punctuation-translate 'half-width) t)
+     (t nil))))
+
 ;;; Convert string at point
 
 (defun rimel--activate-rimel ()
@@ -783,19 +920,23 @@ Return non-nil when a code string was found."
 
 ;;;###autoload
 (defun rimel-convert-string-at-point ()
-  "Convert the code string before point (e.g. pinyin) to Chinese.
-Delete the code string before point (or in the active region) and feed
-it back through rimel, which converts it to Chinese interactively.
-Predicates in `rimel-disable-predicates' are ignored during the
-conversion.
+  "Convert the code string or punctuation before point.
+When the character before point is a known punctuation (see
+`rimel-punctuation-dict'), toggle it between half-width and full-width.
+
+Otherwise delete the code string before point (e.g. pinyin, or in the
+active region) and feed it back through rimel, which converts it to
+Chinese interactively.  Predicates in `rimel-disable-predicates' are
+ignored during the conversion.
 
 Note: unlike pyim's `pyim-convert-string-at-point', dictionary
 management triggers (adding or removing personal words) are not
 supported, as rime manages its user dictionary itself."
   (interactive)
   (rimel--activate-rimel)
-  (or (rimel--feed-entered-at-point-into-rimel)
-      (message "Rimel: no code string at point to convert.")))
+  (or (rimel-punctuation-translate-at-point)
+      (rimel--feed-entered-at-point-into-rimel)
+      (message "Rimel: no code string or punctuation at point to convert.")))
 
 ;;;###autoload (autoload 'rimel-select-schema "rimel" "Select a rime schema interactive." t)
 (defalias 'rimel-select-schema #'liberime-select-schema-interactive)

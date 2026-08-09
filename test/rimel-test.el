@@ -873,6 +873,100 @@ Can be set in tests to simulate rime behavior.")
           (should (equal '(?你) result))
           (should-not rimel--force-input-chinese))))))
 
+;; -----------------------------------------------------------------------
+;; Test: punctuation conversion
+;; -----------------------------------------------------------------------
+
+(ert-deftest rimel-test-punctuation-position ()
+  "Positions in the punctuation dict."
+  (should (equal 0 (rimel--punctuation-position ",")))     ; half-width
+  (should (equal 1 (rimel--punctuation-position "，")))    ; full-width
+  (should (equal 2 (rimel--punctuation-position "’")))     ; paired close
+  (should-not (rimel--punctuation-position "x"))           ; not a punct
+  (should-not (rimel--punctuation-position "")))           ; empty
+
+(ert-deftest rimel-test-punctuation-proper-full-alternates ()
+  "Paired punctuation alternates between open and close forms."
+  (let ((rimel--punctuation-pair-status (list (list "\"" nil) (list "'" nil))))
+    (should (equal "‘" (rimel--punctuation-proper-full '("'" "‘" "’"))))
+    (should (equal "’" (rimel--punctuation-proper-full '("'" "‘" "’"))))
+    (should (equal "‘" (rimel--punctuation-proper-full '("'" "‘" "’")))))
+  ;; Single (unpaired) rows always return the same form.
+  (let ((rimel--punctuation-pair-status (list (list "\"" nil) (list "'" nil))))
+    (should (equal "——" (rimel--punctuation-proper-full '("_" "——"))))
+    (should (equal "——" (rimel--punctuation-proper-full '("_" "——"))))))
+
+(ert-deftest rimel-test-punctuation-translate-full-then-half ()
+  "A half-width punct before point converts to full-width and back."
+  (with-temp-buffer
+    (insert "hello,")
+    (rimel-punctuation-translate 'full-width)
+    (should (equal "hello，" (buffer-string)))
+    (should (equal (point) (point-max)))
+    (rimel-punctuation-translate 'half-width)
+    (should (equal "hello," (buffer-string)))))
+
+(ert-deftest rimel-test-punctuation-translate-only-last-punct ()
+  "With no punct after point, only one punct before point converts."
+  (with-temp-buffer
+    (insert ",,")
+    (rimel-punctuation-translate 'full-width)
+    (should (equal ",，" (buffer-string)))))
+
+(ert-deftest rimel-test-punctuation-translate-paired-span ()
+  "Punctuation pairs around point convert together."
+  (with-temp-buffer
+    (insert "[{''}]")
+    (backward-char 3)
+    (let ((rimel--punctuation-pair-status (list (list "\"" nil) (list "'" nil))))
+      (rimel-punctuation-translate 'full-width)
+      (should (equal "【『‘’』】" (buffer-string)))
+      (rimel-punctuation-translate 'half-width)
+      (should (equal "[{''}]" (buffer-string))))))
+
+(ert-deftest rimel-test-punctuation-translate-at-point-toggle ()
+  "Toggle the punct before point via `rimel-punctuation-translate-at-point'."
+  (with-temp-buffer
+    (insert "hello,")
+    (should (rimel-punctuation-translate-at-point))
+    (should (equal "hello，" (buffer-string)))
+    (should (rimel-punctuation-translate-at-point))
+    (should (equal "hello," (buffer-string)))))
+
+(ert-deftest rimel-test-punctuation-translate-at-point-no-punct ()
+  "Return nil and change nothing when there is no punct before point."
+  (with-temp-buffer
+    (insert "abc")
+    (should-not (rimel-punctuation-translate-at-point))
+    (should (equal "abc" (buffer-string)))))
+
+(ert-deftest rimel-test-convert-string-at-point-punctuation ()
+  "The convert command toggles punctuation half/full width."
+  (rimel-test--reset-rime)
+  (with-temp-buffer
+    (rimel-activate "rimel")
+    (insert "hello,")
+    (let ((unread-command-events nil))
+      (rimel-convert-string-at-point)
+      (should (equal "hello，" (buffer-string)))
+      (should-not unread-command-events))
+    (let ((unread-command-events nil))
+      (rimel-convert-string-at-point)
+      (should (equal "hello," (buffer-string))))))
+
+(ert-deftest rimel-test-convert-string-at-point-punct-precedence ()
+  "Punctuation conversion runs before code-string conversion."
+  (rimel-test--reset-rime)
+  (with-temp-buffer
+    (rimel-activate "rimel")
+    (insert "nihao,")
+    (let ((unread-command-events nil)
+          (rimel--force-input-chinese nil))
+      (rimel-convert-string-at-point)
+      (should (equal "nihao，" (buffer-string)))
+      (should-not unread-command-events)
+      (should-not rimel--force-input-chinese))))
+
 (provide 'rimel-test)
 
 ;;; rimel-test.el ends here
