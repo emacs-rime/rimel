@@ -169,6 +169,7 @@ Can be set in tests to simulate rime behavior.")
 
 (setq load-prefer-newer t)
 (require 'rimel)
+(require 'rimel-convert)
 
 ;; -----------------------------------------------------------------------
 ;; Test runner
@@ -713,6 +714,436 @@ Can be set in tests to simulate rime behavior.")
           (rimel-show-candidate nil))
       (rimel--update-display)
       (should-not rimel--preedit-overlay))))               ; no overlay
+
+;; -----------------------------------------------------------------------
+;; Test: convert-string-at-point
+;; -----------------------------------------------------------------------
+
+(ert-deftest rimel-test-find-entered-at-point-basic ()
+  "Extract the code string before point."
+  (with-temp-buffer
+    (insert "nihao")
+    (should (equal '("nihao" 5) (rimel--find-entered-at-point)))))
+
+(ert-deftest rimel-test-find-entered-at-point-after-text ()
+  "Only the trailing code run before point is extracted."
+  (with-temp-buffer
+    (insert "abc nihao")
+    (should (equal '("nihao" 5) (rimel--find-entered-at-point)))))
+
+(ert-deftest rimel-test-find-entered-at-point-trailing-space ()
+  "Trailing spaces are skipped but counted for deletion."
+  (with-temp-buffer
+    (insert "nihao ")
+    (should (equal '("nihao" 6) (rimel--find-entered-at-point)))))
+
+(ert-deftest rimel-test-find-entered-at-point-leading-quote ()
+  "A leading quote or hyphen (string delimiter) is left in place."
+  (with-temp-buffer
+    (insert "'nihao")
+    (should (equal '("nihao" 5) (rimel--find-entered-at-point)))))
+
+(ert-deftest rimel-test-find-entered-at-point-separator ()
+  "Interior apostrophes (syllable separators) are kept."
+  (with-temp-buffer
+    (insert "ni'hao")
+    (should (equal '("ni'hao" 6) (rimel--find-entered-at-point)))))
+
+(ert-deftest rimel-test-find-entered-at-point-region ()
+  "An active region is used instead of the line prefix."
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (insert "nihao")
+    (push-mark (point-min) t t)
+    (should (equal '("nihao" 5) (rimel--find-entered-at-point)))))
+
+(ert-deftest rimel-test-find-entered-at-point-no-match ()
+  "Return nil when there is no code string at point."
+  (with-temp-buffer
+    (insert "123")
+    (should-not (rimel--find-entered-at-point)))
+  (with-temp-buffer
+    (should-not (rimel--find-entered-at-point))))
+
+(ert-deftest rimel-test-convert-string-at-point ()
+  "Convert deletes the code string and inserts the committed text."
+  (rimel-test--reset-rime)
+  (with-temp-buffer
+    (rimel-activate "rimel")
+    (insert "nihao")
+    (setq rimel-test--process-key-hook
+          (lambda (_key _mask)
+            (when (string= rimel-test--rime-input "nihao")
+              (setq rimel-test--rime-preedit "nihao"
+                    rimel-test--rime-candidates '("你好" "你号")))))
+    (cl-letf (((symbol-function 'read-event)
+               (lambda (&optional _prompt) ?1)))
+      (rimel-convert-string-at-point)
+      (should (equal "你好" (buffer-string)))
+      (should-not unread-command-events))))
+
+(ert-deftest rimel-test-convert-string-at-point-region ()
+  "Convert uses the active region when one exists."
+  (rimel-test--reset-rime)
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (rimel-activate "rimel")
+    (insert "nihao")
+    (push-mark (point-min) t t)
+    (setq rimel-test--process-key-hook
+          (lambda (_key _mask)
+            (when (string= rimel-test--rime-input "nihao")
+              (setq rimel-test--rime-preedit "nihao"
+                    rimel-test--rime-candidates '("你好")))))
+    (cl-letf (((symbol-function 'read-event)
+               (lambda (&optional _prompt) ?1)))
+      (rimel-convert-string-at-point)
+      (should (equal "你好" (buffer-string))))))
+
+(ert-deftest rimel-test-convert-string-at-point-region-with-prefix ()
+  "Region conversion keeps non-code prefix text in the region."
+  (rimel-test--reset-rime)
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (rimel-activate "rimel")
+    (insert "abc nihao")
+    (push-mark (point-min) t t)
+    (setq rimel-test--process-key-hook
+          (lambda (_key _mask)
+            (when (string= rimel-test--rime-input "nihao")
+              (setq rimel-test--rime-preedit "nihao"
+                    rimel-test--rime-candidates '("你好")))))
+    (cl-letf (((symbol-function 'read-event)
+               (lambda (&optional _prompt) ?1)))
+      (rimel-convert-string-at-point)
+      (should (equal "abc 你好" (buffer-string))))))
+
+(ert-deftest rimel-test-convert-string-at-point-region-reversed ()
+  "Region conversion works with point before mark (backwards selection)."
+  (rimel-test--reset-rime)
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (rimel-activate "rimel")
+    (insert "abc nihao")
+    (goto-char (point-min))
+    (push-mark (point-max) t t)    ; point=1, mark=9 -> point < mark
+    (setq rimel-test--process-key-hook
+          (lambda (_key _mask)
+            (when (string= rimel-test--rime-input "nihao")
+              (setq rimel-test--rime-preedit "nihao"
+                    rimel-test--rime-candidates '("你好")))))
+    (cl-letf (((symbol-function 'read-event)
+               (lambda (&optional _prompt) ?1)))
+      (rimel-convert-string-at-point)
+      (should (equal "abc 你好" (buffer-string))))))
+
+(ert-deftest rimel-test-convert-region-multiple-segments ()
+  "Region conversion converts each code segment in turn."
+  (rimel-test--reset-rime)
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (rimel-activate "rimel")
+    (insert "nihao nihao")
+    (push-mark (point-min) t t)
+    (setq rimel-test--process-key-hook
+          (lambda (_key _mask)
+            (when (string= rimel-test--rime-input "nihao")
+              (setq rimel-test--rime-preedit "nihao"
+                    rimel-test--rime-candidates '("你好")))))
+    (cl-letf (((symbol-function 'read-event)
+               (lambda (&optional _prompt) ?1)))
+      (rimel-convert-string-at-point)
+      (should (equal "你好 你好" (buffer-string)))
+      ;; Point ends up after the last converted segment.
+      (should (equal (point) (point-max))))))
+
+(ert-deftest rimel-test-convert-region-mixed ()
+  "Segments without rime candidates are skipped."
+  (rimel-test--reset-rime)
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (rimel-activate "rimel")
+    (insert "abc nihao hello")
+    (push-mark (point-min) t t)
+    (setq rimel-test--process-key-hook
+          (lambda (_key _mask)
+            (when (string= rimel-test--rime-input "nihao")
+              (setq rimel-test--rime-preedit "nihao"
+                    rimel-test--rime-candidates '("你好")))))
+    (cl-letf (((symbol-function 'read-event)
+               (lambda (&optional _prompt) ?1)))
+      (rimel-convert-string-at-point)
+      (should (equal "abc 你好 hello" (buffer-string))))))
+
+(ert-deftest rimel-test-convert-region-with-punctuation ()
+  "Region conversion is not hijacked by a trailing punctuation."
+  (rimel-test--reset-rime)
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (rimel-activate "rimel")
+    (insert "nihao, nihao")
+    (push-mark (point-min) t t)
+    (setq rimel-test--process-key-hook
+          (lambda (_key _mask)
+            (when (string= rimel-test--rime-input "nihao")
+              (setq rimel-test--rime-preedit "nihao"
+                    rimel-test--rime-candidates '("你好")))))
+    (cl-letf (((symbol-function 'read-event)
+               (lambda (&optional _prompt) ?1)))
+      (rimel-convert-string-at-point)
+      (should (equal "你好， 你好" (buffer-string)))))
+  ;; Trailing punctuation: the region still converts, punct to full width.
+  (rimel-test--reset-rime)
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (rimel-activate "rimel")
+    (insert "nihao,")
+    (push-mark (point-min) t t)
+    (setq rimel-test--process-key-hook
+          (lambda (_key _mask)
+            (when (string= rimel-test--rime-input "nihao")
+              (setq rimel-test--rime-preedit "nihao"
+                    rimel-test--rime-candidates '("你好")))))
+    (cl-letf (((symbol-function 'read-event)
+               (lambda (&optional _prompt) ?1)))
+      (rimel-convert-string-at-point)
+      (should (equal "你好，" (buffer-string))))))
+
+(ert-deftest rimel-test-convert-region-full-width-punct-kept ()
+  "Full-width punctuation in the region is left unchanged."
+  (rimel-test--reset-rime)
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (rimel-activate "rimel")
+    (insert "nihao，nihao。")
+    (push-mark (point-min) t t)
+    (setq rimel-test--process-key-hook
+          (lambda (_key _mask)
+            (when (string= rimel-test--rime-input "nihao")
+              (setq rimel-test--rime-preedit "nihao"
+                    rimel-test--rime-candidates '("你好")))))
+    (cl-letf (((symbol-function 'read-event)
+               (lambda (&optional _prompt) ?1)))
+      (rimel-convert-string-at-point)
+      (should (equal "你好，你好。" (buffer-string))))))
+
+(ert-deftest rimel-test-convert-region-quote-pair ()
+  "Paired quotes convert with alternating open/close forms."
+  (rimel-test--reset-rime)
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (rimel-activate "rimel")
+    (insert "\"nihao\"")
+    (push-mark (point-min) t t)
+    (setq rimel-test--process-key-hook
+          (lambda (_key _mask)
+            (when (string= rimel-test--rime-input "nihao")
+              (setq rimel-test--rime-preedit "nihao"
+                    rimel-test--rime-candidates '("你好")))))
+    (cl-letf (((symbol-function 'read-event)
+               (lambda (&optional _prompt) ?1)))
+      (rimel-convert-string-at-point)
+      (should (equal "“你好”" (buffer-string))))))
+
+(ert-deftest rimel-test-convert-string-at-point-no-code ()
+  "With no code string at point, nothing is deleted."
+  (rimel-test--reset-rime)
+  (with-temp-buffer
+    (rimel-activate "rimel")
+    (insert "123")
+    (rimel-convert-string-at-point)
+    (should (equal "123" (buffer-string)))))
+
+(ert-deftest rimel-test-convert-string-at-point-activates-im ()
+  "The command activates rimel when it is not the current input method."
+  (rimel-test--reset-rime)
+  (with-temp-buffer
+    (insert "ni")
+    (setq rimel-test--process-key-hook
+          (lambda (_key _mask)
+            (when (string= rimel-test--rime-input "ni")
+              (setq rimel-test--rime-committed "你"))))
+    (rimel-convert-string-at-point)
+    (should (eq input-method-function #'rimel-input-method))
+    (should (equal "你" (buffer-string)))))
+
+(ert-deftest rimel-test-convert-string-at-point-integration ()
+  "Convert drives rime directly, bypassing disable predicates."
+  (rimel-test--reset-rime)
+  (with-temp-buffer
+    (rimel-activate "rimel")
+    (insert "nihao")
+    (let ((rimel-disable-predicates (list (lambda () t))))
+      (setq rimel-test--process-key-hook
+            (lambda (_key _mask)
+              (when (string= rimel-test--rime-input "nihao")
+                (setq rimel-test--rime-preedit "nihao"
+                      rimel-test--rime-candidates '("你好")))))
+      (cl-letf (((symbol-function 'read-event)
+                 (lambda (&optional _prompt) ?1)))
+        (rimel-convert-string-at-point)
+        (should (equal "你好" (buffer-string)))
+        (should-not unread-command-events)))))
+
+(ert-deftest rimel-test-convert-string-at-point-cancel ()
+  "Cancel in the composition loop inserts nothing (text stays deleted)."
+  (rimel-test--reset-rime)
+  (with-temp-buffer
+    (rimel-activate "rimel")
+    (insert "nihao")
+    (setq rimel-test--process-key-hook
+          (lambda (_key _mask)
+            (when (string= rimel-test--rime-input "nihao")
+              (setq rimel-test--rime-preedit "nihao"
+                    rimel-test--rime-candidates '("你好")))))
+    (let ((unread-command-events nil))
+      (cl-letf (((symbol-function 'read-event)
+                 (lambda (&optional _prompt) 'mouse-1)))  ; unhandled event cancels
+        (rimel-convert-string-at-point)
+        (should (equal "" (buffer-string)))
+        ;; The unhandled event is pushed back for reprocessing.
+        (should (equal '(mouse-1) unread-command-events))))))
+
+;; -----------------------------------------------------------------------
+;; Test: punctuation conversion
+;; -----------------------------------------------------------------------
+
+(ert-deftest rimel-test-punctuation-position ()
+  "Positions in the punctuation dict."
+  (should (equal 0 (rimel--punctuation-position ",")))     ; half-width
+  (should (equal 1 (rimel--punctuation-position "，")))    ; full-width
+  (should (equal 2 (rimel--punctuation-position "’")))     ; paired close
+  (should-not (rimel--punctuation-position "x"))           ; not a punct
+  (should-not (rimel--punctuation-position "")))           ; empty
+
+(ert-deftest rimel-test-punctuation-proper-full-alternates ()
+  "Paired punctuation alternates between open and close forms."
+  (let ((rimel--punctuation-pair-status (list (list "\"" nil) (list "'" nil))))
+    (should (equal "‘" (rimel--punctuation-proper-full '("'" "‘" "’"))))
+    (should (equal "’" (rimel--punctuation-proper-full '("'" "‘" "’"))))
+    (should (equal "‘" (rimel--punctuation-proper-full '("'" "‘" "’")))))
+  ;; Single (unpaired) rows always return the same form.
+  (let ((rimel--punctuation-pair-status (list (list "\"" nil) (list "'" nil))))
+    (should (equal "——" (rimel--punctuation-proper-full '("_" "——"))))
+    (should (equal "——" (rimel--punctuation-proper-full '("_" "——"))))))
+
+(ert-deftest rimel-test-punctuation-proper-full-custom-row ()
+  "Custom paired rows not in `rimel--punctuation-pair-status' work."
+  (let ((rimel-punctuation-dict
+         (append rimel-punctuation-dict '(("\\" "﹁" "﹂")))))
+    (with-temp-buffer
+      (insert "a\\")
+      (rimel-punctuation-translate 'full-width)
+      (should (equal "a﹁" (buffer-string)))
+      (rimel-punctuation-translate 'half-width)
+      (should (equal "a\\" (buffer-string)))
+      (rimel-punctuation-translate 'full-width)
+      (should (equal "a﹂" (buffer-string))))))
+
+(ert-deftest rimel-test-punctuation-custom-overrides-builtin ()
+  "A custom row overriding a built-in entry is applied once."
+  (let ((rimel-punctuation-dict
+         (append (cl-remove-if
+                  (lambda (row) (equal (car row) "|"))
+                  rimel-punctuation-dict)
+                 '(("|" "﹁" "﹂")))))
+    (with-temp-buffer
+      (insert "a|")
+      (rimel-punctuation-translate 'full-width)
+      (should (equal "a﹁" (buffer-string))))))
+
+(ert-deftest rimel-test-punctuation-pair-status-buffer-local ()
+  "Quote alternation state does not leak across buffers."
+  (with-temp-buffer
+    (insert "a'")
+    (rimel-punctuation-translate 'full-width)
+    (should (equal "a‘" (buffer-string))))
+  (with-temp-buffer
+    (insert "b'")
+    (rimel-punctuation-translate 'full-width)
+    (should (equal "b‘" (buffer-string)))))
+
+(ert-deftest rimel-test-punctuation-translate-full-then-half ()
+  "A half-width punct before point converts to full-width and back."
+  (with-temp-buffer
+    (insert "hello,")
+    (rimel-punctuation-translate 'full-width)
+    (should (equal "hello，" (buffer-string)))
+    (should (equal (point) (point-max)))
+    (rimel-punctuation-translate 'half-width)
+    (should (equal "hello," (buffer-string)))))
+
+(ert-deftest rimel-test-punctuation-translate-only-last-punct ()
+  "With no punct after point, only one punct before point converts."
+  (with-temp-buffer
+    (insert ",,")
+    (rimel-punctuation-translate 'full-width)
+    (should (equal ",，" (buffer-string)))))
+
+(ert-deftest rimel-test-punctuation-translate-asymmetric ()
+  "Punctuation converts symmetrically when counts differ."
+  (with-temp-buffer
+    (insert ",,,,,")                ; left 3, right 2
+    (goto-char 4)
+    (rimel-punctuation-translate 'full-width)
+    (should (equal ",，，，，" (buffer-string)))
+    (rimel-punctuation-translate 'half-width)
+    (should (equal ",,,,," (buffer-string)))))
+
+(ert-deftest rimel-test-translate-span-keeps-non-punct ()
+  "`rimel--translate-span' passes non-punctuation through unchanged."
+  (should (equal "a，b" (rimel--translate-span "a,b" 'full-width)))
+  (should (equal "a,b" (rimel--translate-span "a，b" 'half-width))))
+
+(ert-deftest rimel-test-punctuation-translate-paired-span ()
+  "Punctuation pairs around point convert together."
+  (with-temp-buffer
+    (insert "[{''}]")
+    (backward-char 3)
+    (let ((rimel--punctuation-pair-status (list (list "\"" nil) (list "'" nil))))
+      (rimel-punctuation-translate 'full-width)
+      (should (equal "【『‘’』】" (buffer-string)))
+      (rimel-punctuation-translate 'half-width)
+      (should (equal "[{''}]" (buffer-string))))))
+
+(ert-deftest rimel-test-punctuation-translate-at-point-toggle ()
+  "Toggle the punct before point via `rimel-punctuation-translate-at-point'."
+  (with-temp-buffer
+    (insert "hello,")
+    (should (rimel-punctuation-translate-at-point))
+    (should (equal "hello，" (buffer-string)))
+    (should (rimel-punctuation-translate-at-point))
+    (should (equal "hello," (buffer-string)))))
+
+(ert-deftest rimel-test-punctuation-translate-at-point-no-punct ()
+  "Return nil and change nothing when there is no punct before point."
+  (with-temp-buffer
+    (insert "abc")
+    (should-not (rimel-punctuation-translate-at-point))
+    (should (equal "abc" (buffer-string)))))
+
+(ert-deftest rimel-test-convert-string-at-point-punctuation ()
+  "The convert command toggles punctuation half/full width."
+  (rimel-test--reset-rime)
+  (with-temp-buffer
+    (rimel-activate "rimel")
+    (insert "hello,")
+    (let ((unread-command-events nil))
+      (rimel-convert-string-at-point)
+      (should (equal "hello，" (buffer-string)))
+      (should-not unread-command-events))
+    (let ((unread-command-events nil))
+      (rimel-convert-string-at-point)
+      (should (equal "hello," (buffer-string))))))
+
+(ert-deftest rimel-test-convert-string-at-point-punct-precedence ()
+  "Punctuation conversion runs before code-string conversion."
+  (rimel-test--reset-rime)
+  (with-temp-buffer
+    (rimel-activate "rimel")
+    (insert "nihao,")
+    (rimel-convert-string-at-point)
+    (should (equal "nihao，" (buffer-string)))))
 
 (provide 'rimel-test)
 
