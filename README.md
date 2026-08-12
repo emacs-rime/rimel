@@ -17,6 +17,8 @@ Rimel 是一个轻量级的 Emacs 中文输入法，直接基于 [liberime](http
 - 🧠 **Predicates 断言**：根据上下文自动切换中/英文（代码区、字母后、evil 状态等）
 - 🔍 **Rime 码搜索**：`rimel-regexp` 在 isearch / orderless / evil-search 中展开 Rime 码（输入 `ni` 可匹配 `你` 等候选）
 - 🎯 **Avy 跳转**：`rimel-regexp-avy` 让 Avy 字符跳转支持 Rime 码（输入 `ni` 直接跳到 `你`）
+- 💡 **点石成金**：`rimel-convert-string-at-point` 将光标前的拼音/编码转换为中文（移植自 pyim 金手指）
+- ‼️ **标点全半角转换**：金手指同时支持光标处标点符号的半角⇄全角互换（含成对引号/书名号）
 
 ## 安装
 
@@ -177,6 +179,42 @@ Predicates 是一组函数，在每次按键时检查上下文，决定是否跳
 (setq rimel-disable-predicates
       '(pyim-probe-program-mode))
 ```
+
+## 光标处编码转中文（点石成金）
+
+`rimel-convert-string-at-point` 移植自 pyim 的 `pyim-convert-string-at-point`（金手指）：
+删除光标前（或选中区域中）的编码字符串（如拼音），直接送入 rime 交互式转换为中文（在
+同一命令内完成选词/确认）。转换期间忽略 `rimel-disable-predicates`，因为 rime 被直接驱动。
+
+```elisp
+(global-set-key (kbd "M-i") 'rimel-convert-string-at-point)
+```
+
+该功能位于独立的 `rimel-convert.el`，命令按需加载（package 安装后首次调用自动加载；
+直接从源码加载时需 `(require 'rimel-convert)`）。
+
+- 默认匹配的编码字符为 `a-z'`（含拼音隔音符，五笔同样适用），可用 `rimel-convert-valid-chars` 定制（regexp 字符类内容）。
+- 光标前是 `'nihao` 这类字符串字面量时，开头的引号会被保留。
+- 有选中区域时，区域内的每个编码段会**依次转换**（如选中 `nihao nihao` → `你好 你好`）；
+  无 rime 候选的段（如英文单词 `abc`）自动跳过、原样保留；转换后区域内的半角标点会
+  自动转为全角（成对引号交替开/闭，如 `nihao, nihao!` → `你好，你好！`），全角标点不变。
+- 注意：pyim 金手指中的词库管理触发功能（`中文2` 加词、`中文2-` 删词、选中中文加词）未移植，因为 rime 自行管理用户词典，上屏时自动学习新词。
+
+### 标点符号半角⇄全角转换
+
+光标前是标点符号时，金手指命令在半角/全角之间来回切换（半角转全角、全角转半角）：
+
+| 光标处文本 | 运行一次 | 再运行一次 |
+|------------|----------|------------|
+| `hello,`   | `hello，` | `hello,`   |
+| `[{''\|}]`  | `【『‘’\|』】` | `[{''\|}]`  |
+
+- 连续标点以光标为中心成对转换（上表第二行 `\|` 为光标位置）：左右两侧数量不等时只转换
+  对称部分（如 `,,,|,,` 只转中间 4 个，最左侧 1 个保留）；成对标点（引号、书名号等）
+  自动交替开/闭形态。
+- 光标后无标点时，只转换光标前的 1 个标点，重复运行可逐个往回转换。
+- 标点映射表见 `rimel-punctuation-dict`，可自定义。
+- 也可单独使用命令 `rimel-punctuation-translate-at-point`（切换光标前标点）或 `rimel-punctuation-translate`（指定方向转换）。
 
 ## 与 [emacs-rime](https://github.com/DogLooksGood/emacs-rime)、[pyim](https://github.com/tumashu/pyim) 的对比
 

@@ -1,7 +1,7 @@
 # -*- coding:utf-8 -*-
 
 EMACS ?= emacs
-ELC := rimel.elc
+ELC := rimel.elc rimel-convert.elc
 
 .PHONY: all build test test-all lint byte-compile clean
 all: byte-compile lint test
@@ -22,8 +22,9 @@ package-lint:
 	$(EMACS) --batch -Q \
 		--eval "(package-initialize)" \
 		--eval "(require 'package-lint)" \
+		--eval "(setq package-lint-main-file \"rimel.el\")" \
 		-f package-lint-batch-and-exit \
-		rimel.el
+		rimel.el rimel-convert.el
 
 checkdoc:
 	$(EMACS) --batch -Q \
@@ -32,7 +33,7 @@ checkdoc:
 		              (checkdoc-proper-noun-list nil) \
 		              (checkdoc-verb-check-experimental-flag nil) \
 		              (ok t)) \
-		  (dolist (f '(\"rimel.el\")) \
+		  (dolist (f '(\"rimel.el\" \"rimel-convert.el\")) \
 		    (ignore-errors (kill-buffer \"*Warnings*\")) \
 		    (let ((inhibit-message t)) \
 		      (checkdoc-file f)) \
