@@ -15,6 +15,8 @@ Rimel 是一个轻量级的 Emacs 中文输入法，直接基于 [liberime](http
 - 🔢 **数字键/空格选候选**（由 rime 原生处理，无额外拦截）
 - ⌨️ **所有按键可配置**：翻页、确认、取消、退格、选择键均可自定义 see rimel-keymap
 - 🧠 **Predicates 断言**：根据上下文自动切换中/英文（代码区、字母后、evil 状态等）
+- 🔍 **Rime 码搜索**：`rimel-regexp` 在 isearch / orderless / evil-search 中展开 Rime 码（输入 `ni` 可匹配 `你` 等候选）
+- 🎯 **Avy 跳转**：`rimel-regexp-avy` 让 Avy 字符跳转支持 Rime 码（输入 `ni` 直接跳到 `你`）
 
 ## 安装
 
@@ -54,6 +56,45 @@ Rimel 是一个轻量级的 Emacs 中文输入法，直接基于 [liberime](http
 ;; 自定义 posframe 属性 (可选)
 (setq rimel-posframe-properties '(:left-fringe 10 :right-fringe 10))
 ```
+
+## Rime 码搜索（rimel-regexp）
+
+`rimel-regexp` 让 Emacs 搜索支持 Rime 码：在 isearch 中输入 `ni`，可以同时匹配字面量 `ni` 和 `你` 等候选词。候选查询在临时 Rime 会话中进行，不会干扰正在进行的输入。
+
+### 安装
+
+```elisp
+(require 'rimel-regexp)
+(rimel-regexp-mode 1)
+```
+
+集成说明：
+
+- **isearch**：全局生效，普通与正则搜索均支持
+- **orderless**：`orderless-regexp` 自动展开（需先加载 orderless 再启用本模式）
+- **evil**：`evil-ex-search-full-pattern` 自动展开（需先加载 evil-search 再启用本模式）
+- **Avy**：可选，见下文
+
+### 配置
+
+|变量                                 |默认值|说明                                   |
+|-----------------------------------|---|-------------------------------------|
+|`rimel-regexp-schema-id`           |nil|查询候选用的 Rime 方案，nil 表示跟随默认会话          |
+|`rimel-regexp-max-code-length`     |0  |最大展开的码长，0 表示不限制（形码方案建议设置，避免长英文被拆开转换） |
+|`rimel-regexp-candidate-limit`     |100|每个码最多检查的候选数，nil 表示不限制（增量搜索建议设限）      |
+|`rimel-regexp-cache-size`          |256|候选查询缓存大小，非正数禁用缓存                     |
+|`rimel-regexp-omit-code-separators`|t  |相邻码之间的空白是否可匹配空（`ni shijie` 可匹配 `你世界`）|
+
+### Avy 集成（rimel-regexp-avy）
+
+Avy 为软依赖，启用模式时才加载。启用后 Avy 的字符跳转命令被替换为 Rime 码感知版本：输入 `ni` 即可跳转到 `你` 或其他可见候选。
+
+```elisp
+(require 'rimel-regexp-avy)
+(rimel-regexp-avy-mode 1)
+```
+
+被 remap 的命令：`avy-goto-char`、`avy-goto-char-in-line`、`avy-goto-char-2`、`avy-goto-char-timer`。
 
 ## 按键说明
 
