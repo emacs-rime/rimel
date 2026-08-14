@@ -8,6 +8,7 @@
 (defun liberime-process-key (_key) nil)
 (defun liberime-clear-composition () nil)
 (defun liberime-search (_str _limit) nil)
+(defun liberime-get-status () nil)
 (defun liberime-get-candidates (_str _limit) nil)
 (defun liberime-select-schema (_schema) nil)
 (defun liberime-get-schema-list () nil)

@@ -1,9 +1,9 @@
 ;;; rimel.el --- A lightweight Rime input method -*- lexical-binding: t; -*-
 
 ;; Author: jixiuf
-;; URL: https://github.com/jixiuf/rimel
-;; Version: 0.1.1
-;; Package-Requires: ((emacs "29.4") (liberime "0.0.7"))
+;; URL: https://github.com/emacs-rime/rimel
+;; Version: 0.1.2
+;; Package-Requires: ((emacs "29.4") (liberime "0.0.11"))
 ;; Keywords: convenience, Chinese, input-method, rime
 
 ;; This file is NOT part of GNU Emacs.
