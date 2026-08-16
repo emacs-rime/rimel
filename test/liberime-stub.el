@@ -1,5 +1,5 @@
 ;;; liberime-stub.el --- Stub for CI -*- lexical-binding: t; -*-
-;; Version: 0.0.7
+;; Version: 0.0.11
 ;; Package-Requires: ((emacs "26.1"))
 ;;; Code:
 

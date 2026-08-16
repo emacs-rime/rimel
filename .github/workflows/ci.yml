@@ -23,15 +23,15 @@ jobs:
 
       - name: Install liberime stub
         run: |
-          mkdir -p ~/.emacs.d/elpa/liberime-0.0.7
-          cp test/liberime-stub.el ~/.emacs.d/elpa/liberime-0.0.7/liberime.el
-          cp test/liberime-pkg.el ~/.emacs.d/elpa/liberime-0.0.7/
+          mkdir -p ~/.emacs.d/elpa/liberime-0.0.11
+          cp test/liberime-stub.el ~/.emacs.d/elpa/liberime-0.0.11/liberime.el
+          cp test/liberime-pkg.el ~/.emacs.d/elpa/liberime-0.0.11/
 
       - name: Byte-compile
         run: |
           emacs --batch -Q \
             -L . \
-            -L ~/.emacs.d/elpa/liberime-0.0.7 \
+            -L ~/.emacs.d/elpa/liberime-0.0.11 \
             --eval "(setq byte-compile-error-on-warn t)" \
             -f batch-byte-compile \
             rimel.el
@@ -39,7 +39,7 @@ jobs:
         run: |
           emacs --batch -Q \
             --eval "(add-to-list 'package-directory-list \"~/.emacs.d/elpa\")" \
-            --eval "(push \"~/.emacs.d/elpa/liberime-0.0.7\" package-directory-list)" \
+            --eval "(push \"~/.emacs.d/elpa/liberime-0.0.11\" package-directory-list)" \
             --eval "(setq package-archives '((\"melpa\" . \"https://melpa.org/packages/\")))" \
             --eval "(package-initialize)" \
             --eval "(package-refresh-contents)" \
@@ -49,9 +49,9 @@ jobs:
         run: |
           emacs --batch -Q \
             -L . \
-            -L ~/.emacs.d/elpa/liberime-0.0.7 \
+            -L ~/.emacs.d/elpa/liberime-0.0.11 \
             --eval "(add-to-list 'package-directory-list \"~/.emacs.d/elpa\")" \
-            --eval "(push \"~/.emacs.d/elpa/liberime-0.0.7\" package-directory-list)" \
+            --eval "(push \"~/.emacs.d/elpa/liberime-0.0.11\" package-directory-list)" \
             --eval "(package-initialize)" \
             --eval "(require 'package-lint)" \
             -f package-lint-batch-and-exit \
