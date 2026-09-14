@@ -461,9 +461,15 @@ Otherwise return CHAR unchanged."
 
 (defun rimel--composable-key-p (key)
   "Return non-nil if KEY should start a rime composition.
-Includes lowercase letters and common Chinese punctuation marks."
+Includes lowercase letters, digits and common Chinese punctuation
+marks.  Digits must go through rime so the punctuator can see them
+in its commit history and keep decimal points half-width (3.14),
+along with digit separators (1,000) and time colons (12:30).
+Rime records unhandled digits in its commit history without
+committing them; `rimel-input-method' self-inserts those."
   (and (integerp key)
        (or (and (>= key ?a) (<= key ?z))
+           (and (>= key ?0) (<= key ?9))
            (memq key '(?+ ?= ?- ?_ ?\( ?\) ?* ?& ?^ ?% ?$ ?# ?@ ?! ?` ?~
                           ?\[ ?\]  ?{  ?}  ?\\  ?|
                           ?\: ?\; ?\'  ?\"
@@ -503,10 +509,18 @@ This function serves as `input-method-function'."
       (liberime-process-key k)
       ;; Check immediate commit (e.g., rime auto-select)
       (let ((commit (rimel--get-commit)))
-        (if commit
-            (string-to-list commit)
+        (cond
+         (commit
+          (string-to-list commit))
+         ;; Rime did not handle the key and no composition started
+         ;; (e.g. digits: rime records them in its commit history via
+         ;; engine.cc's unhandled-key push, but returns false so the
+         ;; front-end types the character).  Self-insert.
+         ((string-empty-p (or (liberime-get-input) ""))
+          (list key))
+         (t
           ;; Enter composition loop
-          (rimel--composition-loop))))))
+          (rimel--composition-loop)))))))
 
 (defun rimel--update-display ()
   "Update preedit overlay and candidate display from current rime state.
