@@ -195,9 +195,12 @@ Can be set in tests to simulate rime behavior.")
   (should-not (rimel--composable-key-p ?Z)))               ; Z
 
 (ert-deftest rimel-test-composable-key-digits ()
-  "Digits should not be composable."
-  (should-not (rimel--composable-key-p ?0))                ; 0
-  (should-not (rimel--composable-key-p ?9)))               ; 9
+  "Digits should be composable so rime records them in its
+commit history; this lets the punctuator keep decimal points
+half-width (3.14) and handle digit separators (1,000)."
+  (should (rimel--composable-key-p ?0))                    ; 0
+  (should (rimel--composable-key-p ?5))                    ; 5
+  (should (rimel--composable-key-p ?9)))                   ; 9
 
 (ert-deftest rimel-test-composable-key-punctuation ()
   "Chinese punctuation should be composable."
@@ -502,8 +505,27 @@ Can be set in tests to simulate rime behavior.")
   (rimel-test--reset-rime)
   (with-temp-buffer
     (rimel-activate "rimel")
-    (should (equal '(?1) (rimel-input-method ?1)))         ; digit passes through
     (should (equal '(?A) (rimel-input-method ?A)))))       ; uppercase passes through
+
+(ert-deftest rimel-test-input-method-digit-goes-to-rime ()
+  "Digits are fed to rime, then self-inserted.
+Rime records unhandled digits in its commit history without
+committing them (librime engine.cc pushes the key event and
+returns false); rimel self-inserts such keys.  Recording digits
+lets the punctuator keep decimal points half-width (3.14) and
+handle digit separators (1,000)."
+  (rimel-test--reset-rime)
+  (with-temp-buffer
+    (rimel-activate "rimel")
+    (let ((processed 0))
+      (let ((rimel-test--process-key-hook
+             (lambda (key _mask)
+               (when (and (integerp key) (>= key ?0) (<= key ?9))
+                 (cl-incf processed)))))
+        ;; Digit is sent to rime (processed), then self-inserted.
+        (should (equal '(?1) (rimel-input-method ?1)))
+        (should (equal '(?7) (rimel-input-method ?7)))
+        (should (= 2 processed))))))
 
 (ert-deftest rimel-test-input-method-read-only ()
   "Test that keys pass through in read-only buffers."
