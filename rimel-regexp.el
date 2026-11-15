@@ -93,6 +93,141 @@ which contains the original separator can still match."
   :type 'boolean
   :group 'rimel-regexp)
 
+(defcustom rimel-regexp-code-predicate nil
+  "Predicate deciding whether a code is worth a Rime lookup.
+
+When non-nil, it is called with one argument, a lower-case code
+with apostrophes removed, and should return non-nil only for
+codes which may expand to useful candidates.  A rejected code is
+expanded to its literal text without touching Rime, so English
+words cost nothing.
+
+Install `rimel-regexp-pinyin-code-p' for full-pinyin schemas.
+Leave this nil for shape-based or double-pinyin schemas, whose
+codes must always be looked up."
+  :type '(choice (const :tag "Always look up" nil)
+                 (function :tag "Predicate"))
+  :group 'rimel-regexp)
+
+(defcustom rimel-regexp-max-recursion-depth 2
+  "Maximum recursive prefix-expansion levels per code.
+
+The recursive group covers text which no whole-code candidate
+matches; each level costs one extra Rime lookup for the remaining
+code.  Recursion is skipped entirely whenever a full candidate
+already consumes the code.  Zero disables recursive expansion."
+  :type 'integer
+  :group 'rimel-regexp)
+
+(defconst rimel-regexp-pinyin-syllables
+  (concat
+   "a ai an ang ao e ei en eng er o ou "
+   "ba bai ban bang bao bei ben beng bi bian biao bie bin bing bo bu "
+   "pa pai pan pang pao pei pen peng pi pian piao pie pin ping po pou pu "
+   "ma mai man mang mao me mei men meng mi mian miao mie min ming miu mo mou mu "
+   "fa fan fang fei fen feng fo fou fu "
+   "da dai dan dang dao de dei den deng di dia dian diao die ding diu dong dou du duan dui dun duo "
+   "ta tai tan tang tao te teng ti tian tiao tie ting tong tou tu tuan tui tun tuo "
+   "na nai nan nang nao ne nei nen neng ni nian niang niao nie nin ning niu nong nou nu nuan nuo nue nv nve "
+   "la lai lan lang lao le lei leng li lia lian liang liao lie lin ling liu lo long lou lu luan lun luo lv lve "
+   "ga gai gan gang gao ge gei gen geng gong gou gu gua guai guan guang gui gun guo "
+   "ka kai kan kang kao ke kei ken keng kong kou ku kua kuai kuan kuang kui kun kuo "
+   "ha hai han hang hao he hei hen heng hong hou hu hua huai huan huang hui hun huo "
+   "ji jia jian jiang jiao jie jin jing jiong jiu ju juan jue jun "
+   "qi qia qian qiang qiao qie qin qing qiong qiu qu quan que qun "
+   "xi xia xian xiang xiao xie xin xing xiong xiu xu xuan xue xun "
+   "zha zhai zhan zhang zhao zhe zhen zheng zhi zhong zhou zhu zhua zhuai zhuan zhuang zhui zhun zhuo "
+   "cha chai chan chang chao che chen cheng chi chong chou chu chua chuai chuan chuang chui chun chuo "
+   "sha shai shan shang shao she shei shen sheng shi shou shu shua shuai shuan shuang shui shun shuo "
+   "ran rang rao re ren reng ri rong rou ru rua ruan rui run ruo "
+   "za zai zan zang zao ze zei zen zeng zi zong zou zu zuan zui zun zuo "
+   "ca cai can cang cao ce cen ceng ci cong cou cu cuan cui cun cuo "
+   "sa sai san sang sao se sen seng si song sou su suan sui sun suo "
+   "ya yai yan yang yao ye yi yin ying yo yong you yu yuan yue yun "
+   "wa wai wan wang wei wen weng wo wu")
+  "Space-separated standard Mandarin pinyin syllables, used by
+`rimel-regexp-pinyin-code-p'.")
+
+(defconst rimel-regexp--pinyin-syllable-table
+  (let ((table (make-hash-table :test #'equal)))
+    (dolist (syllable (split-string rimel-regexp-pinyin-syllables))
+      (puthash syllable t table))
+    table)
+  "Hash set of `rimel-regexp-pinyin-syllables'.")
+
+(defconst rimel-regexp--pinyin-initial-table
+  (let ((table (make-hash-table :test #'equal)))
+    (dolist (syllable (split-string rimel-regexp-pinyin-syllables))
+      (puthash (substring syllable 0 1) t table))
+    table)
+  "Hash set of letters which begin a pinyin syllable.
+
+A single letter of a code is accepted as the abbreviation of one
+syllable when it is in this set.  The letters i and u never begin
+a syllable and are therefore rejected on their own.")
+
+(defun rimel-regexp--pinyin-accepted-p (code)
+  "Return non-nil when CODE segments into standard pinyin syllables.
+
+CODE must contain only lower-case letters.  Every segment must be
+a full syllable or a single abbreviation letter.  A code longer
+than four letters must be covered by multi-letter syllables for
+at least half of its length plus one, which rejects English
+words made of short segments such as `searchforward', `hello'
+and `xhtml'.  Words built from longer syllable runs (buffer ->
+bu f f er) still pass; the isearch literal fast path keeps them
+zero-cost anyway."
+  (let* ((len (length code))
+         ;; covered[end] is the maximum number of letters a valid
+         ;; segmentation of the first END letters covers with
+         ;; multi-letter syllables, or -1 when unreachable.
+         (covered (make-vector (1+ len) -1)))
+    (aset covered 0 0)
+    (dotimes (start len)
+      (when (>= (aref covered start) 0)
+        ;; Syllables are at most six letters long (zhuang, chuang).
+        (let ((end-max (min len (+ start 6)))
+              (sub-end (1+ start)))
+          (while (<= sub-end end-max)
+            (let* ((sub (substring code start sub-end))
+                   (base (aref covered start))
+                   (gain
+                    (cond
+                     ((and (>= (length sub) 2)
+                           (gethash sub rimel-regexp--pinyin-syllable-table))
+                      (length sub))
+                     ((and (= sub-end (1+ start))
+                           (gethash sub rimel-regexp--pinyin-initial-table))
+                      0))))
+              (when gain
+                (let ((total (+ base gain)))
+                  (when (> total (aref covered sub-end))
+                    (aset covered sub-end total)))))
+            (setq sub-end (1+ sub-end))))))
+    (and (>= (aref covered len) 0)
+         (or (<= len 4)
+             (>= (aref covered len) (/ (1+ len) 2))))))
+
+(defun rimel-regexp-pinyin-code-p (code)
+  "Return non-nil when CODE is a plausible standard-pinyin code.
+
+Accepts full-syllable segmentations (nihao -> ni hao), initial
+abbreviations (sj -> s j), and mixes of both (nisj -> ni s j).
+Codes of at most four letters are accepted whenever they
+segment at all; longer codes must be at least half covered by
+full syllables, which rejects English words such as `buffer',
+`searchforward' and `xhtml' while keeping real abbreviations
+like `sj'.  Single-letter codes are accepted only for letters
+which begin a pinyin syllable (i and u are not syllable
+initials).
+
+Intended as a `rimel-regexp-code-predicate' for full-pinyin
+schemas; do not install it for shape-based or double-pinyin
+schemas, whose codes are not standard pinyin."
+  (let ((len (length code)))
+    (and (> len 0)
+         (rimel-regexp--pinyin-accepted-p code))))
+
 (defconst rimel-regexp--code-pattern "[a-z][a-z']*"
   "Regexp matching a Rime code embedded in a search string.")
 
@@ -106,12 +241,31 @@ which contains the original separator can still match."
 
 (defvar rimel-regexp--saved-isearch-search-fun-function nil)
 
+(defvar rimel-regexp--building-expansion nil
+  "Non-nil while `rimel-regexp-build-regexp-string' is running.
+
+Bound dynamically so that the lookups of one build may share a session.
+A lookup made outside a build keeps using the temporary session that
+`liberime-search' creates for the call itself.")
+
 (defvar rimel-regexp--search-session nil
   "Temporary session reused for all lookups of one expansion.
 
-Bound dynamically around `rimel-regexp-build-regexp-string' when the
-string contains several Rime codes, so creating and destroying a
-session is paid once instead of once per code.")
+Bound dynamically around `rimel-regexp-build-regexp-string' and created
+by the first lookup which actually reaches Rime, so a build served
+entirely from the candidate cache pays no session setup at all.  One
+session per build means liberime's session setup and schema switch are
+paid once instead of once per code and once per expansion level.")
+
+(defvar rimel-regexp--search-session-schema-pending nil
+  "Schema still to be selected on `rimel-regexp--search-session'.
+
+`liberime-search' switches the schema - and liberime then restores the
+session's original schema when the session is destroyed - every time a
+schema is passed explicitly, which costs far more than the lookup
+itself.  The first lookup passes the configured schema so that it is
+selected on the shared session once; later lookups pass nil and reuse
+the schema the session already has.")
 
 (defun rimel-regexp--candidate-limit ()
   "Return the effective candidate limit, or nil for no limit."
@@ -140,13 +294,42 @@ session is paid once instead of once per code.")
         (push candidate result)))
     (nreverse result)))
 
+(defun rimel-regexp--session-for-query ()
+  "Return the session to share during the current build, or nil.
+
+The session is created on demand by the first lookup of the build which
+reaches Rime, so cached lookups never pay for it.  Return nil outside a
+build, where `liberime-search' creates a temporary session per call."
+  (when rimel-regexp--building-expansion
+    (unless rimel-regexp--search-session
+      (setq rimel-regexp--search-session (liberime-session-create)
+            rimel-regexp--search-session-schema-pending rimel-regexp-schema-id))
+    rimel-regexp--search-session))
+
+(defun rimel-regexp--schema-for-query ()
+  "Return the schema argument for one `liberime-search' call.
+
+While a build owns a session, only its first lookup passes a schema: it
+is selected on the session once, and later lookups pass nil so that
+liberime does not switch the schema again.  Outside such a build the
+configured schema is passed as before, because the temporary session
+created for that call is discarded afterwards."
+  (if rimel-regexp--search-session
+      (prog1 rimel-regexp--search-session-schema-pending
+        (setq rimel-regexp--search-session-schema-pending nil))
+    rimel-regexp-schema-id))
+
 (defun rimel-regexp--search-query (code)
   "Return candidate expansion data for Rime code CODE.
 
-The search runs in a temporary Rime session created by
-`liberime-search', so an ongoing composition in the default session is left
-untouched and the schema of the default session is unchanged.  The result is
-an internal plist describing how candidates consume CODE:
+The search never touches the default session: inside a build all lookups
+share the temporary session owned by `rimel-regexp-build-regexp-string'
+(see `rimel-regexp--session-for-query'), and a lookup outside a build uses
+the temporary session that `liberime-search' creates for the call.  An
+ongoing composition in the default session is therefore left untouched,
+and the schema of the default session is unchanged because the shared
+session's schema is restored when it is destroyed.  The result is an
+internal plist describing how candidates consume CODE:
 
   `:commit'          Text Rime committed automatically.  Shape-based
                      schemas push out a completed word when the code grows
@@ -175,12 +358,16 @@ of the default session.
 
 All candidate strings are normalized (properties stripped, empty strings
 and duplicates removed) by `rimel-regexp--normalize-candidates'."
-  (let* ((result (liberime-search code
+  ;; The session must be resolved first: it decides whether this lookup is
+  ;; the one which selects the configured schema.
+  (let* ((session (rimel-regexp--session-for-query))
+         (schema (rimel-regexp--schema-for-query))
+         (result (liberime-search code
                                   (rimel-regexp--candidate-limit)
                                   nil
-                                  rimel-regexp-schema-id
+                                  schema
                                   t
-                                  rimel-regexp--search-session))
+                                  session))
          (commit (plist-get result :commit))
          (full (rimel-regexp--normalize-candidates
                 (plist-get result :full)))
@@ -233,13 +420,16 @@ and duplicates removed) by `rimel-regexp--normalize-candidates'."
 
 The result is an internal plist produced by
 `rimel-regexp--search-query'.  Return nil if STR is invalid, too
-long according to `rimel-regexp-max-code-length', or has no expansions."
+long according to `rimel-regexp-max-code-length', rejected by
+`rimel-regexp-code-predicate', or has no expansions."
   (let ((code (replace-regexp-in-string "'" "" str t t)))
     (when (and (not (string-empty-p code))
                (let ((case-fold-search nil))
                  (string-match-p "\\`[a-z']+\\'" str))
                (or (<= rimel-regexp-max-code-length 0)
-                   (<= (length code) rimel-regexp-max-code-length)))
+                   (<= (length code) rimel-regexp-max-code-length))
+               (or (null rimel-regexp-code-predicate)
+                   (funcall rimel-regexp-code-predicate code)))
       (rimel-regexp-load-liberime)
       (let* ((key (list code
                         (rimel-regexp--candidate-limit)
@@ -275,19 +465,29 @@ to `rimel-regexp-max-code-length', or has no matches."
                        (string-empty-p remaining-input))))
       (cons commit full))))
 
-(defun rimel-regexp--code-regexp (code)
+(defun rimel-regexp--code-regexp (code &optional depth)
   "Return a regexp matching CODE or any of its Rime expansions.
 
-The regexp is the alternation of a base group and a recursive group.  The
-base group covers the literal CODE and the candidates that consume it
-completely (`:full'), prefixed by any automatically committed text
-(`:commit').  The recursive group takes the shortest-prefix candidates
-(`:prefix'), optionally prefixed by `:commit', and appends the expansion of
-`rimel-regexp--code-regexp' on `:remainder'.  For example, the expansion
-of `nihaoshijie' includes the shortest-prefix candidate for `ni' followed
-by the expansion of `haoshijie', so a phrase spanning those code
-boundaries matches through the recursive path as well as directly through
-`:full'."
+The regexp is the alternation of a base group and an optional
+recursive group.  The base group covers the literal CODE and the
+candidates that consume it completely (`:full'), prefixed by any
+automatically committed text (`:commit').  The recursive group is
+built only when nothing consumes the whole code (`:full' empty):
+it takes the shortest-prefix candidates (`:prefix'), optionally
+prefixed by `:commit', and appends the expansion of
+`rimel-regexp--code-regexp' on `:remainder', down to
+`rimel-regexp-max-recursion-depth' levels.  For example, the
+expansion of `nihaoshijie' includes the shortest-prefix candidate
+for `ni' followed by the expansion of `haoshijie', so a phrase
+spanning those code boundaries matches through the recursive path
+as well as directly through `:full'.
+
+DEPTH is the current recursion level.  Cached regexps are stored
+only for top-level calls; deeper calls recompute (cheap elisp)
+and, when they do meet a cached entry from depth zero, that
+regexp is a superset of what their own depth would generate and
+therefore safe to use."
+  (setq depth (or depth 0))
   (let* ((query (rimel-regexp--query-code code))
          (cached (and (equal code (plist-get query :regexp-code))
                       (plist-get query :regexp))))
@@ -311,6 +511,8 @@ boundaries matches through the recursive path as well as directly through
                (base (regexp-opt (cons code converted)))
                (recursive
                 (and prefix
+                     (not full)
+                     (< depth rimel-regexp-max-recursion-depth)
                      (concat
                       (regexp-opt
                        (if commit
@@ -318,11 +520,16 @@ boundaries matches through the recursive path as well as directly through
                                      (concat commit candidate))
                                    prefix)
                          prefix))
-                      (rimel-regexp--code-regexp remainder))))
+                      (rimel-regexp--code-regexp remainder (1+ depth)))))
                (regexp (if recursive
                            (format "\\(?:%s\\|%s\\)" base recursive)
                          base)))
-          (when query
+          ;; Cache top-level regexps only: a regexp built at a deeper
+          ;; recursion level depends on DEPTH, which the query plist does
+          ;; not record.  Deeper calls recompute; if they meet a cached
+          ;; entry from depth zero, that regexp is a superset of their
+          ;; own and therefore safe to use.
+          (when (and query (zerop depth))
             (setf (plist-get query :regexp-code) code
                   (plist-get query :regexp) regexp))
           regexp))))
@@ -350,19 +557,17 @@ Lower-case code runs are expanded independently, so every part of
 `ni shijie' has one-to-many candidate matching.  When LITERAL is non-nil,
 quote non-code parts of STR; this is used for non-regexp isearch.
 
-When STR contains several Rime codes, all lookups share one temporary
-session (see `rimel-regexp--search-session') so the session setup cost is
-paid once instead of once per code."
+All lookups of one build share one temporary session, created by the
+first lookup that is not served from the candidate cache, so liberime's
+session setup and schema switch are paid once per build instead of once
+per code and once per expansion level (see
+`rimel-regexp--session-for-query')."
   (let* ((tokens (vconcat (rimel-regexp--tokenize str)))
          (count (length tokens))
-         (code-count 0)
+         (rimel-regexp--building-expansion t)
          (rimel-regexp--search-session nil)
+         (rimel-regexp--search-session-schema-pending nil)
          pieces)
-    (dotimes (index count)
-      (when (eq (car (aref tokens index)) 'code)
-        (setq code-count (1+ code-count))))
-    (when (> code-count 1)
-      (setq rimel-regexp--search-session (liberime-session-create)))
     (unwind-protect
         (progn
           (dotimes (index count)
@@ -391,25 +596,45 @@ paid once instead of once per code."
   (cons (rimel-regexp-build-regexp-string (car args)) (cdr args)))
 
 (defun rimel-regexp--isearch-search-function ()
-  "Return an isearch function which expands Rime codes."
+  "Return an isearch function which expands Rime codes lazily.
+
+The literal pattern is always tried first; Rime expansion only
+runs when the literal pattern does not match, or when isearch is
+repeating the current search (this-command
+`isearch-repeat-forward'/'isearch-repeat-backward').  Searching
+for an English word which occurs in the buffer therefore never
+reaches Rime, while a pinyin code - which usually does not occur
+literally - still expands on the first keystroke.  Repeating a
+search escalates to the expansion even when the literal pattern
+matched, so Chinese candidates stay reachable when the pattern
+also occurs as literal text."
   (let ((base (or rimel-regexp--saved-isearch-search-fun-function
                   #'isearch-search-fun-default)))
     (if isearch-regexp-function
         ;; Preserve word and symbol isearch semantics.
         (funcall base)
       (let ((literal (not isearch-regexp)))
-        (lambda (string &optional bound noerror _count)
-          ;; The transformed string is always a regexp, even for an ordinary
-          ;; literal isearch, so search it with `isearch-search-fun-default'
-          ;; directly.  Chaining the saved provider would re-apply its own
-          ;; pattern conversion (e.g. helixel's PCRE converter) to an
-          ;; already-expanded elisp regexp and corrupt it.  Three arguments
-          ;; match the calling convention of `isearch-search-string'.
-          (let ((isearch-regexp t)
-                (isearch-regexp-function nil))
-            (funcall (isearch-search-fun-default)
-                     (rimel-regexp-build-regexp-string string literal)
-                     bound noerror)))))))
+        (lambda (string &optional bound noerror count)
+          (or (and (not (memq this-command
+                              '(isearch-repeat-forward
+                                isearch-repeat-backward)))
+                   ;; Literal fast path: the original pattern, searched
+                   ;; with the caller's regexp settings.  Four arguments
+                   ;; match the calling convention of
+                   ;; `isearch-search-string'.
+                   (funcall (isearch-search-fun-default)
+                            string bound noerror count))
+              ;; Expansion path: the transformed string is always a
+              ;; regexp, even for an ordinary literal isearch, so search
+              ;; it with `isearch-search-fun-default' directly.  Chaining
+              ;; the saved provider would re-apply its own pattern
+              ;; conversion (e.g. helixel's PCRE converter) to an
+              ;; already-expanded elisp regexp and corrupt it.
+              (let ((isearch-regexp t)
+                    (isearch-regexp-function nil))
+                (funcall (isearch-search-fun-default)
+                         (rimel-regexp-build-regexp-string string literal)
+                         bound noerror count))))))))
 
 ;; helixel integration -------------------------------------------------------
 ;; None: helixel installs a buffer-local `isearch-search-fun-function' that
