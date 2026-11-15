@@ -73,13 +73,14 @@
                        :remainder nil :remaining-input "ni"
                        :schema-id "luna_pinyin_simp"))))
       (rimel-regexp--search-query "ni")
-      (should (equal args '("ni" 100 nil "luna_pinyin_simp" t nil))))))
+      (should (equal args '("ni" 100 nil "luna_pinyin_simp" t 42))))))
 
 (ert-deftest rimel-regexp-test-build-regexp-reuses-session ()
-  "A string with several codes shares one temporary session."
+  "A string with several codes shares one persistent session."
   (rimel-regexp-clear-cache)
-  (let (sessions-created
-        sessions-destroyed
+  (rimel-regexp--reset-search-session)
+  (let ((sessions-created 0)
+        (sessions-destroyed 0)
         session-args
         built)
     (cl-letf (((symbol-function 'liberime-session-create)
@@ -98,16 +99,70 @@
                        :remainder nil :remaining-input "ni"
                        :schema-id nil))))
       (setq built (rimel-regexp-build-regexp-string "ni shijie"))
+      ;; The session survives the build; reset destroys exactly it.
       (should (eq sessions-created 1))
+      (should (eq sessions-destroyed 0))
+      (rimel-regexp--reset-search-session)
       (should (eq sessions-destroyed 1))
       (should (equal (nreverse session-args) '("ni" "shijie")))
       (should (stringp built)))))
 
-(ert-deftest rimel-regexp-test-build-regexp-single-code-shares-session ()
-  "A single code which recurses reuses one session for every level."
+(ert-deftest rimel-regexp-test-build-regexp-session-persists-across-builds ()
+  "Two builds reuse the same persistent session."
   (rimel-regexp-clear-cache)
-  (let (sessions-created
-        sessions-destroyed
+  (rimel-regexp--reset-search-session)
+  (let ((sessions-created 0) (sessions-destroyed 0))
+    (cl-letf (((symbol-function 'liberime-session-create)
+               (lambda (&optional _schema)
+                 (setq sessions-created (1+ (or sessions-created 0)))
+                 42))
+              ((symbol-function 'liberime-session-destroy)
+               (lambda (_session)
+                 (setq sessions-destroyed (1+ (or sessions-destroyed 0)))))
+              ((symbol-function 'liberime-search)
+               (lambda (&rest _)
+                 (list :commit nil :full '("你") :prefix nil
+                       :remainder nil :remaining-input "ni"
+                       :schema-id nil))))
+      (rimel-regexp-build-regexp-string "ni")
+      (rimel-regexp-clear-cache)
+      (rimel-regexp-build-regexp-string "ni")
+      (should (eq sessions-created 1))
+      (should (eq sessions-destroyed 0))
+      (rimel-regexp--reset-search-session)
+      (should (eq sessions-destroyed 1)))))
+
+(ert-deftest rimel-regexp-test-session-recreated-on-schema-change ()
+  "Changing `rimel-regexp-schema-id' recreates the session."
+  (rimel-regexp-clear-cache)
+  (rimel-regexp--reset-search-session)
+  (let (sessions-created)
+    (cl-letf (((symbol-function 'liberime-session-create)
+               (lambda (&optional _schema)
+                 (setq sessions-created (1+ (or sessions-created 0)))
+                 42))
+              ((symbol-function 'liberime-session-destroy)
+               (lambda (_session) nil))
+              ((symbol-function 'liberime-search)
+               (lambda (&rest _)
+                 (list :commit nil :full '("你") :prefix nil
+                       :remainder nil :remaining-input "ni"
+                       :schema-id "test"))))
+      (let ((rimel-regexp-schema-id "schema_a"))
+        (rimel-regexp--query-code "ni")
+        (should (eq sessions-created 1)))
+      (let ((rimel-regexp-schema-id "schema_b"))
+        (rimel-regexp-clear-cache)
+        (rimel-regexp--query-code "ni")
+        (should (eq sessions-created 2))))
+    (rimel-regexp--reset-search-session)))
+
+(ert-deftest rimel-regexp-test-build-regexp-single-code-shares-session ()
+  "A single code which recurses reuses one persistent session."
+  (rimel-regexp-clear-cache)
+  (rimel-regexp--reset-search-session)
+  (let ((sessions-created 0)
+        (sessions-destroyed 0)
         session-args)
     (cl-letf (((symbol-function 'liberime-session-create)
                (lambda (&optional _schema)
@@ -131,10 +186,14 @@
       (rimel-regexp-build-regexp-string "nihao")
       (should (equal (nreverse session-args) '("nihao" "hao")))
       (should (eq sessions-created 1))
+      (should (eq sessions-destroyed 0))
+      (rimel-regexp--reset-search-session)
       (should (eq sessions-destroyed 1)))))
 
 (ert-deftest rimel-regexp-test-build-regexp-plain-text-creates-no-session ()
   "Text without codes, and a build served from the cache, need no session."
+  (rimel-regexp-clear-cache)
+  (rimel-regexp--reset-search-session)
   (let (created)
     (cl-letf (((symbol-function 'liberime-session-create)
                (lambda (&optional _schema) (setq created t) 42))
@@ -145,7 +204,6 @@
                  (list :commit nil :full '("你") :prefix nil
                        :remainder nil :remaining-input "ni"
                        :schema-id nil))))
-      (rimel-regexp-clear-cache)
       (rimel-regexp-build-regexp-string "你好")
       (should-not created)
       (rimel-regexp-build-regexp-string "ni")
@@ -155,11 +213,13 @@
       (cl-letf (((symbol-function 'liberime-search)
                  (lambda (&rest _) (error "cached build must not query Rime"))))
         (rimel-regexp-build-regexp-string "ni"))
-      (should-not created))))
+      (should-not created))
+    (rimel-regexp--reset-search-session)))
 
 (ert-deftest rimel-regexp-test-build-regexp-selects-schema-once ()
-  "The configured schema is passed to the first lookup of a build only."
+  "The configured schema is passed to the first lookup only."
   (rimel-regexp-clear-cache)
+  (rimel-regexp--reset-search-session)
   (let ((rimel-regexp-schema-id "egret_py")
         calls)
     (cl-letf (((symbol-function 'liberime-session-create)
@@ -180,7 +240,8 @@
       (setq calls (nreverse calls))
       (should (equal (mapcar #'car calls) '("nihao" "hao")))
       (should (equal (mapcar #'cadr calls) '("egret_py" nil)))
-      (should (equal (mapcar #'caddr calls) '(7 7))))))
+      (should (equal (mapcar #'caddr calls) '(7 7)))
+      (rimel-regexp--reset-search-session))))
 
 (ert-deftest rimel-regexp-test-code-regexp-full-skips-recursion ()
   "A full candidate consumes the code, so no recursive group is built."

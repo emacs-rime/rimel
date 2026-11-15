@@ -8,6 +8,8 @@
 (defun liberime-process-key (_key) nil)
 (defun liberime-clear-composition () nil)
 (defun liberime-search (_str _limit) nil)
+(defun liberime-session-create (&optional _schema) 42)
+(defun liberime-session-destroy (_session) nil)
 (defun liberime-get-status () nil)
 (defun liberime-get-candidates (_str _limit) nil)
 (defun liberime-select-schema (_schema) nil)
