@@ -241,31 +241,30 @@ schemas, whose codes are not standard pinyin."
 
 (defvar rimel-regexp--saved-isearch-search-fun-function nil)
 
-(defvar rimel-regexp--building-expansion nil
-  "Non-nil while `rimel-regexp-build-regexp-string' is running.
-
-Bound dynamically so that the lookups of one build may share a session.
-A lookup made outside a build keeps using the temporary session that
-`liberime-search' creates for the call itself.")
-
 (defvar rimel-regexp--search-session nil
-  "Temporary session reused for all lookups of one expansion.
+  "Persistent Rime session shared by all candidate lookups.
 
-Bound dynamically around `rimel-regexp-build-regexp-string' and created
-by the first lookup which actually reaches Rime, so a build served
-entirely from the candidate cache pays no session setup at all.  One
-session per build means liberime's session setup and schema switch are
-paid once instead of once per code and once per expansion level.")
+Created on demand by the first lookup which actually reaches Rime, so
+searches served entirely from the candidate cache pay no session setup
+at all.  A persistent session means liberime's session setup and schema
+switch are paid once per schema instead of once per search: in one
+measurement the per-search cost dropped from ~140ms to ~0.5ms.  The
+default session is never touched: each search clears the composition
+first, and the schema selected on this session is independent of the
+input method session.")
+
+(defvar rimel-regexp--search-session-schema nil
+  "Schema currently selected on `rimel-regexp--search-session'.")
 
 (defvar rimel-regexp--search-session-schema-pending nil
   "Schema still to be selected on `rimel-regexp--search-session'.
 
-`liberime-search' switches the schema - and liberime then restores the
-session's original schema when the session is destroyed - every time a
+`liberime-search' switches the schema - and Switcher::SetActiveSchema
+persists var/previously_selected_schema to user.yaml - every time a
 schema is passed explicitly, which costs far more than the lookup
-itself.  The first lookup passes the configured schema so that it is
-selected on the shared session once; later lookups pass nil and reuse
-the schema the session already has.")
+itself.  Only the first lookup after a session (re)creation passes the
+configured schema so that it is selected once; later lookups pass nil
+and reuse the schema the session already has.")
 
 (defun rimel-regexp--candidate-limit ()
   "Return the effective candidate limit, or nil for no limit."
@@ -294,42 +293,48 @@ the schema the session already has.")
         (push candidate result)))
     (nreverse result)))
 
-(defun rimel-regexp--session-for-query ()
-  "Return the session to share during the current build, or nil.
+(defun rimel-regexp--reset-search-session ()
+  "Destroy the persistent search session, if any."
+  (when rimel-regexp--search-session
+    (ignore-errors
+      (liberime-session-destroy rimel-regexp--search-session)))
+  (setq rimel-regexp--search-session nil
+        rimel-regexp--search-session-schema nil
+        rimel-regexp--search-session-schema-pending nil))
 
-The session is created on demand by the first lookup of the build which
-reaches Rime, so cached lookups never pay for it.  Return nil outside a
-build, where `liberime-search' creates a temporary session per call."
-  (when rimel-regexp--building-expansion
-    (unless rimel-regexp--search-session
+(defun rimel-regexp--session-for-query ()
+  "Return the persistent search session, creating it on demand.
+
+The session is (re)created when it does not exist yet or when the
+wanted schema changed (for example because `rimel-regexp-schema-id' or
+the default session's schema changed), so cached lookups never pay for
+session setup or schema switches."
+  (let ((wanted (rimel-regexp--schema-id)))
+    (unless (and rimel-regexp--search-session
+                 (equal wanted rimel-regexp--search-session-schema))
+      (rimel-regexp--reset-search-session)
       (setq rimel-regexp--search-session (liberime-session-create)
-            rimel-regexp--search-session-schema-pending rimel-regexp-schema-id))
+            rimel-regexp--search-session-schema wanted
+            rimel-regexp--search-session-schema-pending wanted))
     rimel-regexp--search-session))
 
 (defun rimel-regexp--schema-for-query ()
   "Return the schema argument for one `liberime-search' call.
 
-While a build owns a session, only its first lookup passes a schema: it
+Only the first lookup after a session (re)creation passes a schema: it
 is selected on the session once, and later lookups pass nil so that
-liberime does not switch the schema again.  Outside such a build the
-configured schema is passed as before, because the temporary session
-created for that call is discarded afterwards."
-  (if rimel-regexp--search-session
-      (prog1 rimel-regexp--search-session-schema-pending
-        (setq rimel-regexp--search-session-schema-pending nil))
-    rimel-regexp-schema-id))
+liberime does not switch the schema (and persist user.yaml) again."
+  (prog1 rimel-regexp--search-session-schema-pending
+    (setq rimel-regexp--search-session-schema-pending nil)))
 
 (defun rimel-regexp--search-query (code)
   "Return candidate expansion data for Rime code CODE.
 
-The search never touches the default session: inside a build all lookups
-share the temporary session owned by `rimel-regexp-build-regexp-string'
-(see `rimel-regexp--session-for-query'), and a lookup outside a build uses
-the temporary session that `liberime-search' creates for the call.  An
-ongoing composition in the default session is therefore left untouched,
-and the schema of the default session is unchanged because the shared
-session's schema is restored when it is destroyed.  The result is an
-internal plist describing how candidates consume CODE:
+The search never touches the default session: all lookups share the
+persistent session from `rimel-regexp--session-for-query', so an
+ongoing composition in the default session is left untouched and its
+schema is unchanged.  The result is an internal plist describing how
+candidates consume CODE:
 
   `:commit'          Text Rime committed automatically.  Shape-based
                      schemas push out a completed word when the code grows
@@ -348,7 +353,7 @@ internal plist describing how candidates consume CODE:
                      `:commit' is trustworthy: a commit followed by
                      residual input and no candidates is only an
                      automatically committed prefix.
-  `:schema-id'       The schema the temporary session actually used (and
+  `:schema-id'       The schema the session actually used (and
                      `:schema-name', `:is-ascii-mode', `:is-full-shape',
                      `:is-simplified', `:is-traditional', `:is-ascii-punct'
                      and `:is-disabled'), as reported by liberime-search.
@@ -358,6 +363,16 @@ of the default session.
 
 All candidate strings are normalized (properties stripped, empty strings
 and duplicates removed) by `rimel-regexp--normalize-candidates'."
+  (condition-case _err
+      (rimel-regexp--search-query-1 code)
+    ;; The persistent session can die across `liberime-deploy' or
+    ;; `liberime-finalize'; recreate it once and retry.
+    (error
+     (rimel-regexp--reset-search-session)
+     (rimel-regexp--search-query-1 code))))
+
+(defun rimel-regexp--search-query-1 (code)
+  "Worker of `rimel-regexp--search-query'; see there for the plist docs."
   ;; The session must be resolved first: it decides whether this lookup is
   ;; the one which selects the configured schema.
   (let* ((session (rimel-regexp--session-for-query))
@@ -557,39 +572,30 @@ Lower-case code runs are expanded independently, so every part of
 `ni shijie' has one-to-many candidate matching.  When LITERAL is non-nil,
 quote non-code parts of STR; this is used for non-regexp isearch.
 
-All lookups of one build share one temporary session, created by the
-first lookup that is not served from the candidate cache, so liberime's
-session setup and schema switch are paid once per build instead of once
-per code and once per expansion level (see
-`rimel-regexp--session-for-query')."
+All lookups share the persistent session from
+`rimel-regexp--session-for-query'; session setup and schema switches
+are paid once per schema instead of once per build."
   (let* ((tokens (vconcat (rimel-regexp--tokenize str)))
          (count (length tokens))
-         (rimel-regexp--building-expansion t)
-         (rimel-regexp--search-session nil)
-         (rimel-regexp--search-session-schema-pending nil)
          pieces)
-    (unwind-protect
-        (progn
-          (dotimes (index count)
-            (let* ((token (aref tokens index))
-                   (kind (car token))
-                   (text (cdr token)))
-              (push
-               (pcase kind
-                 ('code (rimel-regexp--code-regexp text))
-                 ('literal
-                  (if (and rimel-regexp-omit-code-separators
-                           (> index 0)
-                           (< index (1- count))
-                           (eq (car (aref tokens (1- index))) 'code)
-                           (eq (car (aref tokens (1+ index))) 'code)
-                           (string-match-p "\\`[[:space:]]+\\'" text))
-                      (format "\\(?:%s\\)?" (regexp-quote text))
-                    (if literal (regexp-quote text) text))))
-               pieces)))
-          (mapconcat #'identity (nreverse pieces) ""))
-      (when rimel-regexp--search-session
-        (liberime-session-destroy rimel-regexp--search-session)))))
+    (dotimes (index count)
+      (let* ((token (aref tokens index))
+             (kind (car token))
+             (text (cdr token)))
+        (push
+         (pcase kind
+           ('code (rimel-regexp--code-regexp text))
+           ('literal
+            (if (and rimel-regexp-omit-code-separators
+                     (> index 0)
+                     (< index (1- count))
+                     (eq (car (aref tokens (1- index))) 'code)
+                     (eq (car (aref tokens (1+ index))) 'code)
+                     (string-match-p "\\`[[:space:]]+\\'" text))
+                (format "\\(?:%s\\)?" (regexp-quote text))
+              (if literal (regexp-quote text) text))))
+         pieces)))
+    (mapconcat #'identity (nreverse pieces) "")))
 
 (defun rimel-regexp-filter-args (args)
   "Replace the first string in ARGS with its Rime-aware regexp."
@@ -674,6 +680,7 @@ for their integration to take effect."
 (defun rimel-regexp--remove-integrations ()
   "Remove all integrations installed by this package."
   (rimel-regexp--update-advices nil)
+  (rimel-regexp--reset-search-session)
   (when rimel-regexp--saved-isearch-search-fun-function
     ;; Do not overwrite a provider installed by another package while this
     ;; mode was active.

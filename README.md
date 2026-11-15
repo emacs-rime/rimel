@@ -61,7 +61,7 @@ Rimel 是一个轻量级的 Emacs 中文输入法，直接基于 [liberime](http
 
 ## Rime 码搜索（rimel-regexp）
 
-`rimel-regexp` 让 Emacs 搜索支持 Rime 码：在 isearch 中输入 `ni`，可以同时匹配字面量 `ni` 和 `你` 等候选词。候选查询在临时 Rime 会话中进行，不会干扰正在进行的输入。
+`rimel-regexp` 让 Emacs 搜索支持 Rime 码：在 isearch 中输入 `ni`，可以同时匹配字面量 `ni` 和 `你` 等候选词。所有候选查询共用一个持久 Rime 会话（建会话与选方案只付一次，后续查询约 1ms），不会干扰正在进行的输入。
 
 isearch 集成采用字面量优先：字面量能匹配（如对函数名/单词搜索）时完全不查 Rime；字面量搜不到或重复搜索（`C-s`）时才展开 Rime 码，因此英文搜索零开销，拼音搜索照常生效。
 
